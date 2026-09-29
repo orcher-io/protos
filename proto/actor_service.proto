@@ -1,0 +1,418 @@
+syntax = "proto3";
+
+package orcher.v1;
+
+// ActorService is the API for actors: stateful objects addressed by type and
+// key, whose operations run in services.
+//
+// Like workflows and tasks, actor work is pulled: services poll for
+// operations and run the actor handlers (user code), while the server routes
+// invocations, stores actor state, and guarantees a single writer per key.
+service ActorService {
+  // Service -> Server: PollActorOperation polls for actor operations to run.
+  // It long-polls: it blocks until work is available or the poll times out.
+  rpc PollActorOperation(PollActorOperationRequest) returns (PollActorOperationResponse);
+
+  // Service -> Server: CompleteActorOperation reports the result of an
+  // operation the service has run.
+  rpc CompleteActorOperation(CompleteActorOperationRequest) returns (CompleteActorOperationResponse);
+
+  // Service -> Server: GetState reads a state value of an actor instance while
+  // an operation runs.
+  rpc GetState(GetStateRequest) returns (GetStateResponse);
+
+  // Service -> Server: SetState writes a state value of an actor instance
+  // while an operation runs.
+  rpc SetState(SetStateRequest) returns (SetStateResponse);
+
+  // Service -> Server: DeleteState removes one state key of an actor instance.
+  rpc DeleteState(DeleteStateRequest) returns (DeleteStateResponse);
+
+  // Service -> Server: ListStateKeys lists the state keys of an actor instance.
+  rpc ListStateKeys(ListStateKeysRequest) returns (ListStateKeysResponse);
+
+  // Client -> Server: InvokeOperation invokes an actor operation and returns
+  // its result. The server routes it, enforces a single writer per key, and
+  // queues it for a service to poll.
+  rpc InvokeOperation(InvokeOperationRequest) returns (InvokeOperationResponse);
+
+  // Service -> Server: RegisterHandlers declares the actor handlers a service
+  // provides. Services call it on startup.
+  rpc RegisterHandlers(RegisterHandlersRequest) returns (RegisterHandlersResponse);
+
+  // Service -> Server: Heartbeat keeps a handler registration alive.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// ============================================================================
+// Poll Actor Operation (Service -> Server)
+// ============================================================================
+
+// PollActorOperationRequest polls for actor operations.
+message PollActorOperationRequest {
+  // Service ID.
+  string service_id = 1;
+
+  // Maximum number of operations to return at once.
+  uint32 max_operations = 2;
+
+  // How long to wait for work, in milliseconds.
+  uint64 timeout_ms = 3;
+}
+
+// PollActorOperationResponse carries the operations to run.
+message PollActorOperationResponse {
+  // Operations to run; empty if the poll timed out.
+  repeated ActorOperation operations = 1;
+}
+
+// ActorOperation is one invocation of an actor operation.
+message ActorOperation {
+  // Unique ID of this operation.
+  string operation_id = 1;
+
+  // Actor type name (e.g., "ShoppingCart").
+  string actor_name = 2;
+
+  // Actor instance key (e.g., "user-123").
+  string key = 3;
+
+  // Operation name (e.g., "add_item").
+  string operation = 4;
+
+  // Serialized operation parameters.
+  bytes payload = 5;
+
+  // Operation mode.
+  OperationMode mode = 6;
+
+  // Execution ID, for idempotency and tracing.
+  string execution_id = 7;
+
+  // Request metadata.
+  map<string, string> metadata = 8;
+}
+
+// ============================================================================
+// Complete Actor Operation (Service -> Server)
+// ============================================================================
+
+// CompleteActorOperationRequest reports the outcome of an actor operation.
+message CompleteActorOperationRequest {
+  // Service ID.
+  string service_id = 1;
+
+  // Operation ID from the PollActorOperationResponse.
+  string operation_id = 2;
+
+  // Execution ID, for tracing.
+  string execution_id = 3;
+
+  // Serialized operation result.
+  bytes result = 4;
+
+  // Outcome of the operation.
+  ExecutionStatus status = 5;
+
+  // Error message, if status is ERROR.
+  string error_message = 6;
+
+  // Error code, if status is ERROR.
+  string error_code = 7;
+
+  // How long the operation ran, in milliseconds.
+  uint64 duration_ms = 8;
+}
+
+// CompleteActorOperationResponse acknowledges the outcome.
+message CompleteActorOperationResponse {
+  // True if the outcome was recorded.
+  bool success = 1;
+
+  // Error message, if not successful.
+  string error_message = 2;
+}
+
+// OperationMode says whether an operation may run alongside others on the
+// same actor instance.
+enum OperationMode {
+  OPERATION_MODE_UNSPECIFIED = 0;
+  OPERATION_MODE_EXCLUSIVE = 1; // Single writer: runs alone, serialized per key
+  OPERATION_MODE_SHARED = 2; // Read-only: may run alongside other shared operations; state writes are refused
+}
+
+// ExecutionStatus is the outcome of an actor operation.
+enum ExecutionStatus {
+  EXECUTION_STATUS_UNSPECIFIED = 0;
+  EXECUTION_STATUS_SUCCESS = 1;
+  EXECUTION_STATUS_ERROR = 2;
+  EXECUTION_STATUS_TIMEOUT = 3;
+  EXECUTION_STATUS_CANCELLED = 4;
+}
+
+// ============================================================================
+// State Access (Service -> Server)
+// ============================================================================
+
+// GetStateRequest reads one state value of an actor instance.
+message GetStateRequest {
+  // Actor type name.
+  string actor_name = 1;
+
+  // Actor instance key.
+  string key = 2;
+
+  // State key to read.
+  string state_key = 3;
+
+  // Execution ID, for tracing.
+  string execution_id = 4;
+}
+
+// GetStateResponse carries the state value.
+message GetStateResponse {
+  // Serialized state value; empty if the key does not exist.
+  bytes value = 1;
+
+  // True if the key exists.
+  bool exists = 2;
+
+  // Optional version (ETag) of the value, for optimistic locking.
+  string version = 3;
+}
+
+// SetStateRequest writes one state value of an actor instance.
+message SetStateRequest {
+  // Actor type name.
+  string actor_name = 1;
+
+  // Actor instance key.
+  string key = 2;
+
+  // State key to write.
+  string state_key = 3;
+
+  // Serialized state value.
+  bytes value = 4;
+
+  // Execution ID, for tracing.
+  string execution_id = 5;
+
+  // Optional: the version the caller last read. The write succeeds only if
+  // the stored value still has this version. Empty or "0" writes
+  // unconditionally.
+  string expected_version = 6;
+}
+
+// SetStateResponse reports the result of the write.
+message SetStateResponse {
+  // True if the value was written.
+  bool success = 1;
+
+  // New version (ETag) of the value.
+  string version = 2;
+
+  // Error message, if not successful.
+  string error_message = 3;
+}
+
+// DeleteStateRequest removes one state key of an actor instance.
+message DeleteStateRequest {
+  // Actor type name.
+  string actor_name = 1;
+
+  // Actor instance key.
+  string key = 2;
+
+  // State key to delete.
+  string state_key = 3;
+
+  // Execution ID, for tracing.
+  string execution_id = 4;
+}
+
+// DeleteStateResponse reports the result of the delete.
+message DeleteStateResponse {
+  // True if the request succeeded.
+  bool success = 1;
+
+  // True if the key existed before the delete.
+  bool existed = 2;
+}
+
+// ListStateKeysRequest lists the state keys of an actor instance.
+message ListStateKeysRequest {
+  // Actor type name.
+  string actor_name = 1;
+
+  // Actor instance key.
+  string key = 2;
+
+  // Execution ID, for tracing.
+  string execution_id = 3;
+
+  // Optional: only keys starting with this prefix.
+  string prefix = 4;
+}
+
+// ListStateKeysResponse carries the state keys.
+message ListStateKeysResponse {
+  // The state keys.
+  repeated string keys = 1;
+}
+
+// ============================================================================
+// Invoke Operation (Client -> Server)
+// ============================================================================
+
+// InvokeOperationRequest invokes an operation on an actor instance.
+message InvokeOperationRequest {
+  // Actor type name.
+  string actor_name = 1;
+
+  // Actor instance key.
+  string key = 2;
+
+  // Operation name.
+  string operation = 3;
+
+  // Serialized operation parameters.
+  bytes payload = 4;
+
+  // Optional: how long to wait for the result, in milliseconds.
+  uint64 timeout_ms = 5;
+
+  // Optional: key that makes the invocation idempotent.
+  string idempotency_key = 6;
+
+  // Request metadata.
+  map<string, string> metadata = 7;
+}
+
+// InvokeOperationResponse carries the outcome of the operation.
+message InvokeOperationResponse {
+  // Serialized operation result.
+  bytes result = 1;
+
+  // Outcome of the operation.
+  ExecutionStatus status = 2;
+
+  // Error message, if status is ERROR.
+  string error_message = 3;
+
+  // Error code, if status is ERROR.
+  string error_code = 4;
+
+  // Execution ID, for tracing.
+  string execution_id = 5;
+
+  // How long the operation ran, in milliseconds.
+  uint64 duration_ms = 6;
+}
+
+// ============================================================================
+// Handler Registration (Service -> Server)
+// ============================================================================
+
+// RegisterHandlersRequest declares the actor handlers a service provides.
+message RegisterHandlersRequest {
+  // Service ID.
+  string service_id = 1;
+
+  // The actor handlers this service provides.
+  repeated ActorHandler handlers = 2;
+
+  // Service metadata.
+  map<string, string> metadata = 3;
+}
+
+// ActorHandler is one actor operation a service can run.
+message ActorHandler {
+  // Actor type name.
+  string actor_name = 1;
+
+  // Operation name.
+  string operation = 2;
+
+  // Operation mode.
+  OperationMode mode = 3;
+
+  // Optional operation metadata.
+  map<string, string> metadata = 4;
+}
+
+// RegisterHandlersResponse reports the result of the registration.
+message RegisterHandlersResponse {
+  // True if the handlers were registered.
+  bool success = 1;
+
+  // Registration ID, sent with each Heartbeat.
+  string registration_id = 2;
+
+  // Number of handlers registered.
+  uint32 handlers_registered = 3;
+
+  // Error message, if not successful.
+  string error_message = 4;
+}
+
+// ============================================================================
+// Heartbeat (Service -> Server)
+// ============================================================================
+
+// HeartbeatRequest keeps a handler registration alive and reports load.
+message HeartbeatRequest {
+  // Service ID.
+  string service_id = 1;
+
+  // Registration ID from RegisterHandlers.
+  string registration_id = 2;
+
+  // Health of the service.
+  WorkerStatus status = 3;
+
+  // Current load metrics.
+  WorkerMetrics metrics = 4;
+}
+
+// HeartbeatResponse acknowledges the heartbeat.
+message HeartbeatResponse {
+  // True if the heartbeat was accepted.
+  bool success = 1;
+
+  // The server no longer knows the registration; call RegisterHandlers again.
+  bool re_register = 2;
+
+  // Server time.
+  int64 timestamp = 3;
+}
+
+// WorkerStatus is the health a service reports in its heartbeat.
+enum WorkerStatus {
+  WORKER_STATUS_UNSPECIFIED = 0;
+  WORKER_STATUS_HEALTHY = 1;
+  WORKER_STATUS_DEGRADED = 2;
+  WORKER_STATUS_DRAINING = 3;
+  WORKER_STATUS_UNHEALTHY = 4;
+}
+
+// WorkerMetrics is the load a service reports in its heartbeat.
+message WorkerMetrics {
+  // Number of operations running.
+  uint32 operations_in_progress = 1;
+
+  // Number of operations completed.
+  uint64 operations_completed = 2;
+
+  // Number of operations failed.
+  uint64 operations_failed = 3;
+
+  // Average operation duration, in milliseconds.
+  double avg_duration_ms = 4;
+
+  // CPU usage, as a percentage.
+  double cpu_usage = 5;
+
+  // Memory usage, in bytes.
+  uint64 memory_usage_bytes = 6;
+}

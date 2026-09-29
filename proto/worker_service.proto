@@ -1,0 +1,169 @@
+syntax = "proto3";
+
+package orcher.v1;
+
+// WorkerService manages the lifecycle of workers.
+//
+// Workers (SDK instances that run workflows and tasks) register with the
+// server on startup, send periodic heartbeats, and deregister on shutdown.
+// This is what lets the admin dashboard show connected workers with their
+// capabilities, health and load.
+service WorkerService {
+  // Service -> Server: RegisterWorker registers a worker and declares what it
+  // can run.
+  rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
+
+  // Service -> Server: WorkerHeartbeat keeps a registration alive and reports
+  // load.
+  rpc WorkerHeartbeat(WorkerHeartbeatRequest) returns (WorkerHeartbeatResponse);
+
+  // Service -> Server: DeregisterWorker ends a registration when the worker
+  // shuts down gracefully.
+  rpc DeregisterWorker(DeregisterWorkerRequest) returns (DeregisterWorkerResponse);
+}
+
+// ============================================================================
+// Register Worker (Service -> Server)
+// ============================================================================
+
+// RegisterWorkerRequest registers a worker.
+message RegisterWorkerRequest {
+  // Unique identifier of this worker process.
+  string service_id = 1;
+
+  // Human-readable worker identity (e.g., "worker-prod-01@host").
+  string identity = 2;
+
+  // Task queue this worker polls.
+  string task_queue = 3;
+
+  // Namespace this worker operates in.
+  string namespace = 4;
+
+  // What the worker can run.
+  WorkerCapabilities capabilities = 5;
+
+  // Additional metadata (SDK version, host info, etc.).
+  map<string, string> metadata = 6;
+
+  // Opaque identifier for the code release this worker is running.
+  //
+  // Distinct from anything in `metadata`: that is an untyped bag for humans,
+  // whereas this is the value an execution can be bound to, so it has to be a
+  // first-class field the server can match on. Empty means the worker does not
+  // declare one.
+  string version_id = 7;
+}
+
+// WorkerCapabilities declares what a worker can run.
+message WorkerCapabilities {
+  // Workflow types this worker can run.
+  repeated string workflow_types = 1;
+
+  // Task types this worker can run.
+  repeated string task_types = 2;
+
+  // Maximum number of workflow executions at once.
+  uint32 max_concurrent_workflows = 3;
+
+  // Maximum number of task executions at once.
+  uint32 max_concurrent_tasks = 4;
+}
+
+// RegisterWorkerResponse reports the result of the registration.
+message RegisterWorkerResponse {
+  // True if the worker was registered.
+  bool success = 1;
+
+  // Registration ID (a UUID), sent with each heartbeat and on deregistration.
+  string registration_id = 2;
+
+  // Error message, if not successful.
+  string error_message = 3;
+}
+
+// ============================================================================
+// Worker Heartbeat (Service -> Server)
+// ============================================================================
+
+// WorkerHeartbeatRequest keeps a worker registration alive.
+message WorkerHeartbeatRequest {
+  // Identifier of the worker process, as registered.
+  string service_id = 1;
+
+  // Registration ID from RegisterWorkerResponse.
+  string registration_id = 2;
+
+  // Current health of the worker.
+  WorkerRegistrationStatus status = 3;
+
+  // Current load metrics.
+  WorkerLoadMetrics metrics = 4;
+}
+
+// WorkerLoadMetrics is the load a worker reports in its heartbeat.
+message WorkerLoadMetrics {
+  // Number of workflows running.
+  uint32 workflows_in_progress = 1;
+
+  // Number of tasks running.
+  uint32 tasks_in_progress = 2;
+
+  // Workflows completed since registration.
+  uint64 workflows_completed = 3;
+
+  // Tasks completed since registration.
+  uint64 tasks_completed = 4;
+
+  // Workflows failed since registration.
+  uint64 workflows_failed = 5;
+
+  // Tasks failed since registration.
+  uint64 tasks_failed = 6;
+
+  // CPU usage, as a percentage (0.0 - 100.0).
+  double cpu_usage = 7;
+
+  // Memory usage, in bytes.
+  uint64 memory_usage_bytes = 8;
+}
+
+// WorkerRegistrationStatus is the health a worker reports in its heartbeat.
+enum WorkerRegistrationStatus {
+  WORKER_REGISTRATION_STATUS_UNSPECIFIED = 0;
+  WORKER_REGISTRATION_STATUS_HEALTHY = 1;
+  WORKER_REGISTRATION_STATUS_DEGRADED = 2;
+  WORKER_REGISTRATION_STATUS_DRAINING = 3;
+  WORKER_REGISTRATION_STATUS_UNHEALTHY = 4;
+}
+
+// WorkerHeartbeatResponse acknowledges the heartbeat.
+message WorkerHeartbeatResponse {
+  // True if the heartbeat was accepted.
+  bool success = 1;
+
+  // The server no longer knows the registration; call RegisterWorker again.
+  bool re_register = 2;
+
+  // Server time.
+  int64 timestamp = 3;
+}
+
+// ============================================================================
+// Deregister Worker (Service -> Server)
+// ============================================================================
+
+// DeregisterWorkerRequest ends a worker registration.
+message DeregisterWorkerRequest {
+  // Identifier of the worker process, as registered.
+  string service_id = 1;
+
+  // Registration ID from RegisterWorkerResponse.
+  string registration_id = 2;
+}
+
+// DeregisterWorkerResponse acknowledges the deregistration.
+message DeregisterWorkerResponse {
+  // True if the registration was ended.
+  bool success = 1;
+}

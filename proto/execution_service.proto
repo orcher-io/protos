@@ -1,0 +1,588 @@
+syntax = "proto3";
+
+package orcher.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "types.proto";
+
+// ExecutionService is the API services (execution runtimes) use to poll for
+// workflow and task work and to report its outcome.
+//
+// Terminology:
+// - "Service" = execution runtime that polls for and executes work
+// - "Task" = discrete unit of work executed outside the workflow sandbox
+// - "Event" = external message delivered to a running workflow
+service ExecutionService {
+  // PollWorkflowExecution polls for workflow execution work.
+  // It long-polls: it blocks until work is available or the poll times out.
+  rpc PollWorkflowExecution(PollWorkflowExecutionRequest) returns (PollWorkflowExecutionResponse);
+
+  // PollTaskExecution polls for task execution work.
+  // It long-polls: it blocks until work is available or the poll times out.
+  rpc PollTaskExecution(PollTaskExecutionRequest) returns (PollTaskExecutionResponse);
+
+  // CompleteWorkflowExecution reports the result of a workflow execution step:
+  // the commands the workflow produced and any query or update results.
+  rpc CompleteWorkflowExecution(CompleteWorkflowExecutionRequest) returns (CompleteWorkflowExecutionResponse);
+
+  // FailWorkflowExecution reports that a workflow execution step failed.
+  rpc FailWorkflowExecution(FailWorkflowExecutionRequest) returns (FailWorkflowExecutionResponse);
+
+  // CompleteTaskExecution reports successful completion of a task.
+  rpc CompleteTaskExecution(CompleteTaskExecutionRequest) returns (CompleteTaskExecutionResponse);
+
+  // FailTaskExecution reports that a task execution failed.
+  rpc FailTaskExecution(FailTaskExecutionRequest) returns (FailTaskExecutionResponse);
+
+  // CancelTaskExecution reports that a task execution was canceled.
+  rpc CancelTaskExecution(CancelTaskExecutionRequest) returns (CancelTaskExecutionResponse);
+
+  // RecordTaskHeartbeat sends a heartbeat for a long-running task.
+  // It keeps the task from hitting its heartbeat timeout, can carry progress
+  // details, and tells the service whether the task has been asked to cancel.
+  rpc RecordTaskHeartbeat(RecordTaskHeartbeatRequest) returns (RecordTaskHeartbeatResponse);
+
+  // RespondQueryTask responds to a workflow query.
+  rpc RespondQueryTask(RespondQueryTaskRequest) returns (RespondQueryTaskResponse);
+
+  // RespondUpdateTask responds to workflow updates delivered by a poll.
+  rpc RespondUpdateTask(RespondUpdateTaskRequest) returns (RespondUpdateTaskResponse);
+
+  // ReleaseWorkflowExecution hands back a workflow execution step the service
+  // received from PollWorkflowExecution but will not run, typically because it
+  // is shutting down. The workflow is offered to the next poll at once rather
+  // than after its claim times out. Nothing is recorded against the workflow:
+  // no step is applied, nothing is failed, and the journal is unchanged.
+  //
+  // Releasing a step that has already been completed or released, or that has
+  // since been handed to another poll, is acknowledged and does nothing, so a
+  // service may send it again after a lost reply. A release for an execution
+  // the caller cannot see, because it does not exist or belongs to another
+  // organization or namespace, is answered NOT_FOUND.
+  rpc ReleaseWorkflowExecution(ReleaseWorkflowExecutionRequest) returns (ReleaseWorkflowExecutionResponse);
+
+  // ShutdownWorker tells the server that the service with this identity is
+  // shutting down. Its open polls, workflow and task alike, are answered at
+  // once with no work, and the server stops handing out work to the polls it
+  // sends afterwards, so work stays available to the services that remain
+  // while this one drains what it already holds. Work it already holds is
+  // unaffected: it may still complete, fail or release it. A poll that was
+  // already being answered when the shutdown arrived may still carry work, so
+  // a service should release anything it receives after sending this.
+  //
+  // Sending it again is harmless. The server forgets it after a while, so an
+  // identity reused by a later process is not refused work for good; a
+  // service that sends worker_instance_id, here and on its polls, is not
+  // refused work at all by a process that reuses its identity.
+  rpc ShutdownWorker(ShutdownWorkerRequest) returns (ShutdownWorkerResponse);
+}
+
+// PollWorkflowExecutionRequest polls for workflow execution work.
+message PollWorkflowExecutionRequest {
+  // Task queue to poll from.
+  string task_queue = 1;
+
+  // Namespace to poll from (defaults to "default").
+  string namespace = 2;
+
+  // Identity of the service, for tracking and debugging.
+  string identity = 3;
+
+  // Maximum time to wait for work. The server answers sooner if work becomes
+  // available.
+  google.protobuf.Duration poll_timeout = 4;
+
+  // Reserved: must not be reused. The server spreads work across the services
+  // polling a queue itself, so a worker configures no sharding.
+  reserved 5, 6, 7;
+  reserved "sharding_enabled", "total_shards", "assigned_shards";
+
+  // Opaque identifier for the code release this worker is running: a git sha,
+  // an image digest, a release tag, whatever the deployment already has.
+  //
+  // The server treats it as a label and never parses or orders it, so the
+  // same field can identify a serverless endpoint as well as a deployed
+  // binary. Empty, the default, means the worker does not declare one.
+  string version_id = 8;
+
+  // Identifies this process of the service, as distinct from any other
+  // process polling under the same identity: the value the SDK registers as
+  // RegisterWorkerRequest.service_id, which it generates afresh for each
+  // process. A ShutdownWorker that names an instance applies only to polls
+  // from that instance, so a restarted service that reuses its identity is
+  // served at once. Empty means the poll names no instance: it could come
+  // from any process, so a shutdown of its identity applies to it only for a
+  // few minutes from when the shutdown was sent. A service should send it.
+  string worker_instance_id = 9;
+}
+
+// PollWorkflowExecutionResponse contains workflow execution work.
+message PollWorkflowExecutionResponse {
+  // Workflow execution identifiers.
+  string workflow_id = 1;
+  string execution_id = 2;
+
+  // Workflow type.
+  string workflow_type = 3;
+
+  // Task queue name.
+  string task_queue = 4;
+
+  // Previous execution ID, for an execution that restarted fresh.
+  string previous_execution_id = 5;
+
+  // Attempt number, counting retries.
+  int32 attempt = 6;
+
+  // The execution journal up to this point. The service replays these
+  // entries to reconstruct workflow state.
+  repeated JournalEntry journal = 7;
+
+  // Previous execution started event ID (for pagination).
+  int64 previous_started_event_id = 8;
+
+  // Started event ID for this execution step.
+  int64 started_event_id = 9;
+
+  // Queries to answer, if any.
+  repeated QueryRequest queries = 10;
+
+  // Workflow start time.
+  google.protobuf.Timestamp workflow_start_time = 11;
+
+  // Current execution start time.
+  google.protobuf.Timestamp execution_start_time = 12;
+
+  // Workflow input (JSON encoded).
+  bytes input = 13;
+
+  // Opaque token naming this step. Send it back unchanged in
+  // CompleteWorkflowExecutionRequest.stream_entry_id, so the server can
+  // acknowledge the step, or as ReleaseWorkflowExecutionRequest.task_token.
+  string stream_entry_id = 14;
+
+  // Updates to process, if any. Updates are synchronous mutations sent with
+  // WorkflowService.UpdateWorkflow.
+  repeated UpdateRequest updates = 15;
+}
+
+// CompleteWorkflowExecutionRequest completes a workflow execution step.
+message CompleteWorkflowExecutionRequest {
+  // Workflow execution identifiers.
+  string workflow_id = 1;
+  string execution_id = 2;
+
+  // Namespace.
+  string namespace = 3;
+
+  // Identity of the service.
+  string identity = 4;
+
+  // Task token (opaque identifier from poll response).
+  bytes task_token = 5;
+
+  // Commands generated by the workflow execution.
+  repeated Command commands = 6;
+
+  // Results of the queries the poll response carried, if any.
+  repeated QueryResult query_results = 7;
+
+  // Whether execution forced a new execution step.
+  bool force_new_execution_step = 8;
+
+  // Binary checksum for verification.
+  bytes binary_checksum = 9;
+
+  // The stream_entry_id from the poll response, unchanged. When set, the
+  // server acknowledges the step as processed, so it is not handed out again.
+  string stream_entry_id = 10;
+
+  // Results of the updates the poll response carried, if any.
+  repeated UpdateResult update_results = 11;
+
+  // What the service that runs the tasks handed back in eager_tasks does with
+  // them; see TaskCapabilities. They are served as a poll declaring the same
+  // would be. Unset means nothing beyond the baseline.
+  TaskCapabilities eager_task_capabilities = 12;
+}
+
+// CompleteWorkflowExecutionResponse acknowledges completion and may hand back
+// tasks to run at once.
+message CompleteWorkflowExecutionResponse {
+  // Tasks the completing worker can run immediately, saving a poll round
+  // trip. The server fills this only when all of these hold:
+  // - the workflow scheduled tasks with ScheduleTask commands,
+  // - the completing worker has capacity (permits) to spare, and
+  // - the tasks are on the task queue the worker polls.
+  repeated PollTaskExecutionResponse eager_tasks = 1;
+}
+
+// FailWorkflowExecutionRequest reports workflow execution failure.
+message FailWorkflowExecutionRequest {
+  // Workflow execution identifiers.
+  string workflow_id = 1;
+  string execution_id = 2;
+
+  // Namespace.
+  string namespace = 3;
+
+  // Identity of the service.
+  string identity = 4;
+
+  // Task token.
+  bytes task_token = 5;
+
+  // Failure details.
+  Failure failure = 6;
+
+  // Binary checksum.
+  bytes binary_checksum = 7;
+}
+
+// FailWorkflowExecutionResponse acknowledges failure.
+message FailWorkflowExecutionResponse {
+  // Empty: a successful response is the acknowledgment.
+}
+
+// PollTaskExecutionRequest polls for task execution work.
+message PollTaskExecutionRequest {
+  // Task queue to poll from.
+  string task_queue = 1;
+
+  // Namespace to poll from.
+  string namespace = 2;
+
+  // Identity of the service.
+  string identity = 3;
+
+  // Maximum time to wait for work.
+  google.protobuf.Duration poll_timeout = 4;
+
+  // Task queue metadata (optional).
+  map<string, string> task_queue_metadata = 5;
+
+  // Identifies this process of the service; see
+  // PollWorkflowExecutionRequest.worker_instance_id.
+  string worker_instance_id = 6;
+
+  // What the service does with the tasks it is handed; see TaskCapabilities.
+  // Unset means nothing beyond the baseline.
+  TaskCapabilities task_capabilities = 7;
+}
+
+// TaskCapabilities declares what a service does with the tasks it runs,
+// beyond what every service does. The server adapts how it serves a task to
+// what the service that runs it declares; a service that declares nothing
+// gets the baseline behavior.
+message TaskCapabilities {
+  // The service heartbeats every task it runs, on its own and whatever the
+  // task's code does, at a third or less of the task's heartbeat timeout,
+  // from when it receives the task until it reports the outcome.
+  //
+  // The server then gives a task that sets no heartbeat timeout a default
+  // one, and says so in the heartbeat_timeout of the task it hands out. A
+  // task whose worker dies, or whose poll response is lost on the way, is
+  // then timed out once that much time passes without a heartbeat, and
+  // retried under its retry policy, where otherwise nothing but a timeout
+  // of the task's own would ever recover it. A service that does not
+  // heartbeat on its own must not declare it: its long tasks would be timed
+  // out while they run.
+  bool auto_heartbeat = 1;
+}
+
+// PollTaskExecutionResponse contains task execution work.
+message PollTaskExecutionResponse {
+  // Opaque token that identifies the task when completing, failing,
+  // canceling or heartbeating it.
+  bytes task_token = 1;
+
+  // Workflow execution identifiers.
+  string workflow_id = 2;
+  string execution_id = 3;
+
+  // Task identifiers.
+  string task_id = 4;
+  string task_type = 5;
+
+  // Task queue name.
+  string task_queue = 6;
+
+  // Namespace.
+  string namespace = 7;
+
+  // Serialized task input.
+  bytes input = 8;
+
+  // Task headers.
+  map<string, bytes> headers = 9;
+
+  // When the task was scheduled.
+  google.protobuf.Timestamp scheduled_time = 10;
+
+  // Current attempt number, counting retries.
+  int32 attempt = 11;
+
+  // Schedule-to-start timeout.
+  google.protobuf.Duration schedule_to_start_timeout = 12;
+
+  // Start-to-close timeout.
+  google.protobuf.Duration start_to_close_timeout = 13;
+
+  // Heartbeat timeout: the task's own, or the server's default when the task
+  // sets none and the service declared TaskCapabilities.auto_heartbeat. The
+  // task is timed out once this long passes without a heartbeat.
+  google.protobuf.Duration heartbeat_timeout = 14;
+
+  // Retry policy for this task.
+  RetryPolicy retry_policy = 15;
+}
+
+// CompleteTaskExecutionRequest reports successful task completion.
+message CompleteTaskExecutionRequest {
+  // Task token from poll response.
+  bytes task_token = 1;
+
+  // Namespace.
+  string namespace = 2;
+
+  // Identity of the service.
+  string identity = 3;
+
+  // Serialized task result.
+  bytes result = 4;
+}
+
+// CompleteTaskExecutionResponse acknowledges task completion and may hand
+// back further tasks to run at once.
+message CompleteTaskExecutionResponse {
+  // Tasks the completing worker can run immediately, saving a poll round
+  // trip. The server fills this only when all of these hold:
+  // - the workflow has more tasks ready to run,
+  // - the completing worker has capacity (permits) to spare, and
+  // - the tasks are on the task queue the worker polls.
+  repeated PollTaskExecutionResponse eager_tasks = 1;
+}
+
+// FailTaskExecutionRequest reports task execution failure.
+message FailTaskExecutionRequest {
+  // Task token from poll response.
+  bytes task_token = 1;
+
+  // Namespace.
+  string namespace = 2;
+
+  // Identity of the service.
+  string identity = 3;
+
+  // Failure details.
+  Failure failure = 4;
+}
+
+// FailTaskExecutionResponse acknowledges task failure.
+message FailTaskExecutionResponse {
+  // Empty: a successful response is the acknowledgment.
+}
+
+// CancelTaskExecutionRequest reports task cancellation.
+message CancelTaskExecutionRequest {
+  // Task token from poll response.
+  bytes task_token = 1;
+
+  // Namespace.
+  string namespace = 2;
+
+  // Identity of the service.
+  string identity = 3;
+
+  // Cancellation details.
+  bytes details = 4;
+}
+
+// CancelTaskExecutionResponse acknowledges task cancellation.
+message CancelTaskExecutionResponse {
+  // Empty: a successful response is the acknowledgment.
+}
+
+// RecordTaskHeartbeatRequest sends a heartbeat for a long-running task.
+message RecordTaskHeartbeatRequest {
+  // Task token from poll response.
+  bytes task_token = 1;
+
+  // Namespace.
+  string namespace = 2;
+
+  // Identity of the service.
+  string identity = 3;
+
+  // Optional progress details (serialized).
+  bytes details = 4;
+}
+
+// RecordTaskHeartbeatResponse acknowledges heartbeat.
+message RecordTaskHeartbeatResponse {
+  // Cancellation of the task has been requested; it should stop and report
+  // itself canceled.
+  bool cancel_requested = 1;
+}
+
+// RespondQueryTaskRequest responds to a workflow query.
+message RespondQueryTaskRequest {
+  // Task token from poll response.
+  bytes task_token = 1;
+
+  // Namespace.
+  string namespace = 2;
+
+  // Completed query results.
+  repeated QueryResult query_results = 3;
+}
+
+// RespondQueryTaskResponse acknowledges the query results.
+message RespondQueryTaskResponse {
+  // Empty: a successful response is the acknowledgment.
+}
+
+// ReleaseWorkflowExecutionRequest hands back a workflow execution step.
+message ReleaseWorkflowExecutionRequest {
+  // Workflow execution identifiers.
+  string workflow_id = 1;
+  string execution_id = 2;
+
+  // Namespace.
+  string namespace = 3;
+
+  // Identity of the service.
+  string identity = 4;
+
+  // The token the poll response carried for this step, in its
+  // stream_entry_id, sent back as it was received. It names the step being
+  // released, so a release that arrives after the step was handed to another
+  // poll cannot take it back from that one. Without it the server can only
+  // tell by identity, and releases the step only if this service is the one
+  // holding it.
+  bytes task_token = 5;
+}
+
+// ReleaseWorkflowExecutionResponse acknowledges the release.
+message ReleaseWorkflowExecutionResponse {
+  // Empty: a successful response is the acknowledgment.
+}
+
+// ShutdownWorkerRequest announces that a service is shutting down.
+message ShutdownWorkerRequest {
+  // Namespace the service polls.
+  string namespace = 1;
+
+  // Identity of the service, as it sends it on completions. Polls sent under
+  // the names the SDKs derive from it for their pollers are covered too. At
+  // most 256 bytes.
+  string identity = 2;
+
+  // The process that is shutting down, as it sends worker_instance_id on its
+  // polls. When set, only polls from that process are refused work, and a
+  // later process polling under the same identity with a different instance
+  // id is served as usual; a poll naming no instance is refused only for the
+  // first few minutes. When empty, every poll under the identity is refused,
+  // for those few minutes only, since a later process may reuse the identity.
+  // At most 256 bytes; at most 16 processes of one identity at once.
+  string worker_instance_id = 3;
+
+  // The task queues whose polls the shutdown applies to. Empty means every
+  // queue the caller may poll: all of them for an unrestricted credential,
+  // and the queues it is limited to for one that is. A credential limited to
+  // some queues may name only those. Sent again naming other queues, the
+  // shutdown covers those as well as the ones it covered, up to 16 in all.
+  repeated string task_queues = 4;
+}
+
+// ShutdownWorkerResponse acknowledges the shutdown.
+message ShutdownWorkerResponse {
+  // Empty: a successful response is the acknowledgment.
+}
+
+// QueryRequest is a query the workflow is asked to answer.
+message QueryRequest {
+  // Unique query ID.
+  string query_id = 1;
+
+  // Name of the query handler.
+  string query_type = 2;
+
+  // Query arguments (serialized).
+  bytes query_args = 3;
+}
+
+// QueryResult contains the result of a query.
+message QueryResult {
+  // Query ID.
+  string query_id = 1;
+
+  // Result type.
+  QueryResultType result_type = 2;
+
+  // Query result (serialized) or error message.
+  oneof result {
+    bytes answer = 3;
+    string error_message = 4;
+  }
+}
+
+// QueryResultType indicates the type of query result.
+enum QueryResultType {
+  QUERY_RESULT_TYPE_UNSPECIFIED = 0;
+  QUERY_RESULT_TYPE_ANSWERED = 1;
+  QUERY_RESULT_TYPE_FAILED = 2;
+}
+
+// UpdateRequest is an update the workflow is asked to process.
+message UpdateRequest {
+  // Unique update ID.
+  string update_id = 1;
+
+  // Update handler name.
+  string update_type = 2;
+
+  // Update arguments (serialized).
+  bytes args = 3;
+}
+
+// UpdateResult contains the result of an update.
+message UpdateResult {
+  // Update ID.
+  string update_id = 1;
+
+  // Result type.
+  UpdateResultType result_type = 2;
+
+  // Update result (serialized) or error message.
+  oneof result {
+    bytes answer = 3;
+    string error_message = 4;
+  }
+}
+
+// UpdateResultType indicates the type of update result.
+enum UpdateResultType {
+  UPDATE_RESULT_TYPE_UNSPECIFIED = 0;
+  UPDATE_RESULT_TYPE_COMPLETED = 1;
+  UPDATE_RESULT_TYPE_REJECTED = 2;
+  UPDATE_RESULT_TYPE_FAILED = 3;
+}
+
+// RespondUpdateTaskRequest responds to workflow updates.
+message RespondUpdateTaskRequest {
+  // Task token from poll response.
+  bytes task_token = 1;
+
+  // Namespace.
+  string namespace = 2;
+
+  // Completed update results.
+  repeated UpdateResult update_results = 3;
+}
+
+// RespondUpdateTaskResponse acknowledges the update results.
+message RespondUpdateTaskResponse {
+  // Empty: a successful response is the acknowledgment.
+}

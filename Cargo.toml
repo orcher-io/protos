@@ -1,0 +1,28 @@
+[package]
+name = "orcher-proto"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["ORCHER Contributors"]
+description = "Protocol definitions for ORCHER orchestration platform"
+repository = "https://github.com/orcher-io/protos"
+keywords = ["orchestration", "workflow", "grpc", "protobuf"]
+categories = ["asynchronous", "network-programming"]
+
+[dependencies]
+tonic = "0.12"
+prost = "0.13"
+prost-types = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+
+[build-dependencies]
+tonic-build = "0.12"
+protox = "0.8"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+
+[features]
+default = []

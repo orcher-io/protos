@@ -1,0 +1,907 @@
+syntax = "proto3";
+
+package orcher.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// ============================================================================
+// Common Types
+// ============================================================================
+
+// WorkflowExecution identifies one execution of a workflow.
+message WorkflowExecution {
+  // The workflow ID, shared by every execution of the workflow.
+  string workflow_id = 1;
+
+  // The ID of this particular execution (run).
+  string execution_id = 2;
+}
+
+// Payload is a piece of serialized data together with metadata that says how
+// it was encoded.
+//
+// Keeping the encoding next to the bytes lets SDKs in different languages
+// read each other's data, and lets an application plug in its own
+// serialization format (JSON, Protobuf, MessagePack, ...), compression,
+// encryption or custom codec without changing the workflows that use it.
+//
+// # Standard Metadata Keys
+//
+// - "encoding": The encoding type(s) used (e.g., "json", "binary/protobuf", "json/gzip/encrypted")
+// - "content-type": MIME type of the original data (e.g., "application/json", "application/octet-stream")
+//
+// # Encoding Chain Format
+//
+// When multiple codecs are applied (compression, encryption), the encoding
+// metadata uses "/" as a separator to indicate the order:
+//   "json/gzip/encrypted" means: JSON → Gzip → Encryption
+//
+// Decoding happens in reverse order:
+//   Decryption → Gunzip → JSON deserialization
+//
+// # Example Usage
+//
+// ## Simple JSON Payload
+// ```text
+// {
+//   metadata: {
+//     "encoding": b"json",
+//     "content-type": b"application/json"
+//   },
+//   data: b'{"order_id":"123","amount":99.99}'
+// }
+// ```
+//
+// ## Compressed JSON Payload
+// ```text
+// {
+//   metadata: {
+//     "encoding": b"json/gzip",
+//     "content-type": b"application/json"
+//   },
+//   data: <gzipped JSON bytes>
+// }
+// ```
+//
+// ## Encrypted Compressed JSON Payload
+// ```text
+// {
+//   metadata: {
+//     "encoding": b"json/gzip/encrypted",
+//     "content-type": b"application/json",
+//     "encryption-key-id": b"key-123"
+//   },
+//   data: <encrypted gzipped JSON bytes>
+// }
+// ```
+message Payload {
+  // The serialized data bytes.
+  //
+  // The format of this data is determined by the "encoding" metadata:
+  // - "json": UTF-8 encoded JSON string
+  // - "binary": Raw bytes (application-defined format)
+  // - "binary/protobuf": Protobuf-encoded message
+  // - "json/gzip": Gzip-compressed JSON
+  // - "json/gzip/encrypted": AES-256-GCM encrypted, gzip-compressed JSON
+  //
+  // With several codecs, encoding applies them in order:
+  //   data → serialize (JSON) → compress (Gzip) → encrypt (AES)
+  //
+  // and decoding applies them in reverse:
+  //   encrypted bytes → decrypt → decompress → deserialize
+  bytes data = 1;
+
+  // Metadata describing how the data is encoded.
+  //
+  // Standard keys:
+  // - "encoding": The encoding chain (e.g., "json", "binary/protobuf", "json/gzip")
+  // - "content-type": MIME type (e.g., "application/json", "application/x-protobuf")
+  //
+  // Applications may add their own keys, for example:
+  // - "encryption-key-id": Identifier for the encryption key used
+  // - "compression-level": Compression level (e.g., "9" for maximum)
+  // - "schema-version": Version of the data schema
+  // - "message-type": Application-specific message type identifier
+  //
+  // Values are bytes so that any encoding fits; most are UTF-8 strings.
+  map<string, bytes> metadata = 2;
+}
+
+// Payloads is an ordered list of payloads, typically the arguments of a
+// workflow or task.
+//
+// Each argument is serialized as its own Payload.
+//
+// # Example Usage
+//
+// ## Function with Multiple Arguments
+// ```text
+// async fn process_order(order_id: String, amount: f64, customer: Customer) -> Result<Receipt>
+// ```
+//
+// is called with:
+// ```text
+// Payloads {
+//   payloads: [
+//     Payload { /* order_id serialized */ },
+//     Payload { /* amount serialized */ },
+//     Payload { /* customer serialized */ }
+//   ]
+// }
+// ```
+message Payloads {
+  // The arguments or return values, in parameter order: payloads[0] is the
+  // first argument, payloads[1] the second, and so on. Empty for a function
+  // that takes no arguments.
+  repeated Payload payloads = 1;
+}
+
+// Header carries metadata key-value pairs alongside a request.
+message Header {
+  map<string, bytes> fields = 1;
+}
+
+// ============================================================================
+// Retry and Error Handling
+// ============================================================================
+
+// RetryPolicy defines how a failed workflow or task is retried.
+message RetryPolicy {
+  // Delay before the first retry.
+  google.protobuf.Duration initial_interval = 1;
+
+  // Factor the delay is multiplied by after each retry.
+  double backoff_coefficient = 2;
+
+  // Upper bound on the delay between retries.
+  google.protobuf.Duration maximum_interval = 3;
+
+  // Maximum number of attempts; 0 means unlimited.
+  int32 maximum_attempts = 4;
+
+  // Failure types that are never retried: a failure of one of these types
+  // fails immediately.
+  repeated string non_retryable_error_types = 5;
+}
+
+// Failure describes an error raised by a workflow or task.
+message Failure {
+  // Human-readable error message.
+  string message = 1;
+
+  // Where the error came from (e.g., "TaskExecutionError", "WorkflowError").
+  string source = 2;
+
+  // Stack trace, if available.
+  string stack_trace = 3;
+
+  // The failure that caused this one, for error chains.
+  Failure cause = 4;
+
+  // Application-specific failure type. RetryPolicy.non_retryable_error_types
+  // is matched against this.
+  string failure_type = 5;
+
+  // Additional serialized details.
+  bytes details = 6;
+
+  // The code that raised the failure says it must not be retried, whatever
+  // the retry policy allows. Carried apart from failure_type so a type name
+  // keeps meaning only what was raised, and a policy can still name it.
+  bool non_retryable = 7;
+}
+
+// ============================================================================
+// Workflow Status
+// ============================================================================
+
+// WorkflowStatus is the current state of a workflow execution.
+enum WorkflowStatus {
+  WORKFLOW_STATUS_UNSPECIFIED = 0;
+  WORKFLOW_STATUS_RUNNING = 1;
+  WORKFLOW_STATUS_COMPLETED = 2;
+  WORKFLOW_STATUS_FAILED = 3;
+  WORKFLOW_STATUS_CANCELED = 4;
+  WORKFLOW_STATUS_TERMINATED = 5;
+  WORKFLOW_STATUS_RESTARTED_FRESH = 6;
+  WORKFLOW_STATUS_TIMED_OUT = 7;
+  WORKFLOW_STATUS_RESET = 8;
+  // Submitted but not yet claimed by a worker.
+  WORKFLOW_STATUS_PENDING = 9;
+}
+
+// WorkflowExecutionStatus mirrors WorkflowStatus for the QueryService API;
+// the values have the same meaning.
+enum WorkflowExecutionStatus {
+  WORKFLOW_EXECUTION_STATUS_UNSPECIFIED = 0;
+  WORKFLOW_EXECUTION_STATUS_RUNNING = 1;
+  WORKFLOW_EXECUTION_STATUS_COMPLETED = 2;
+  WORKFLOW_EXECUTION_STATUS_FAILED = 3;
+  WORKFLOW_EXECUTION_STATUS_CANCELED = 4;
+  WORKFLOW_EXECUTION_STATUS_TERMINATED = 5;
+  WORKFLOW_EXECUTION_STATUS_RESTARTED_FRESH = 6;
+  WORKFLOW_EXECUTION_STATUS_TIMED_OUT = 7;
+  WORKFLOW_EXECUTION_STATUS_RESET = 8;
+  // Submitted but not yet claimed by a worker.
+  WORKFLOW_EXECUTION_STATUS_PENDING = 9;
+}
+
+// ============================================================================
+// Event Types and Attributes
+// ============================================================================
+
+// StepType identifies the kind of step a StepCompletedEventAttributes entry
+// records.
+enum StepType {
+  STEP_TYPE_UNSPECIFIED = 0;
+  STEP_TYPE_TASK = 1; // Registered task (ctx.execute_task)
+  STEP_TYPE_CLOSURE = 2; // Inline closure (ctx.execute)
+  STEP_TYPE_CHILD_WORKFLOW = 3; // Child workflow execution
+  STEP_TYPE_SIDE_EFFECT = 4; // Side effect whose result is recorded for replay
+}
+
+// ============================================================================
+// Journal Entry Types
+// ============================================================================
+
+// EntryType identifies what an entry in the execution journal records.
+enum EntryType {
+  ENTRY_TYPE_UNSPECIFIED = 0;
+
+  // Workflow execution entries.
+  ENTRY_TYPE_WORKFLOW_EXECUTION_STARTED = 1;
+  ENTRY_TYPE_WORKFLOW_EXECUTION_COMPLETED = 2;
+  ENTRY_TYPE_WORKFLOW_EXECUTION_FAILED = 3;
+  ENTRY_TYPE_WORKFLOW_EXECUTION_TIMED_OUT = 4;
+  ENTRY_TYPE_WORKFLOW_EXECUTION_CANCELED = 5;
+  ENTRY_TYPE_WORKFLOW_EXECUTION_RESTARTED_FRESH = 6;
+  ENTRY_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED = 7;
+  ENTRY_TYPE_WORKFLOW_EXECUTION_TERMINATED = 8;
+  ENTRY_TYPE_WORKFLOW_EXECUTION_RESET = 9;
+
+  // Execution step entries.
+  ENTRY_TYPE_EXECUTION_STEP_SCHEDULED = 20;
+  ENTRY_TYPE_EXECUTION_STEP_STARTED = 21;
+  ENTRY_TYPE_EXECUTION_STEP_COMPLETED = 22;
+  ENTRY_TYPE_EXECUTION_STEP_FAILED = 23;
+  ENTRY_TYPE_EXECUTION_STEP_TIMED_OUT = 24;
+
+  // Task entries.
+  ENTRY_TYPE_TASK_SCHEDULED = 30;
+  ENTRY_TYPE_TASK_STARTED = 31;
+  ENTRY_TYPE_TASK_COMPLETED = 32;
+  ENTRY_TYPE_TASK_FAILED = 33;
+  ENTRY_TYPE_TASK_TIMED_OUT = 34;
+  ENTRY_TYPE_TASK_CANCEL_REQUESTED = 35;
+  ENTRY_TYPE_TASK_CANCELED = 36;
+
+  // Timer entries.
+  ENTRY_TYPE_TIMER_STARTED = 40;
+  ENTRY_TYPE_TIMER_FIRED = 41;
+  ENTRY_TYPE_TIMER_CANCELED = 42;
+
+  // An event (an external message sent to the workflow) was received. "Event"
+  // here means that message, not a journal entry.
+  ENTRY_TYPE_EVENT_RECEIVED = 50;
+
+  // A step of any kind completed: inline closure, task, child workflow or
+  // side effect. See StepType.
+  ENTRY_TYPE_STEP_COMPLETED = 60;
+
+  // Child workflow entries.
+  ENTRY_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED = 70;
+  ENTRY_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED = 71;
+  ENTRY_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED = 72;
+  ENTRY_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT = 73;
+  ENTRY_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED = 74;
+  ENTRY_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED = 75;
+
+  // Update entries (synchronous workflow mutations).
+  ENTRY_TYPE_UPDATE_ACCEPTED = 90;
+  ENTRY_TYPE_UPDATE_COMPLETED = 91;
+}
+
+// WorkflowExecutionStartedEventAttributes records how a workflow execution was started.
+message WorkflowExecutionStartedEventAttributes {
+  string workflow_type = 1;
+  string task_queue = 2;
+  bytes input = 3;
+  google.protobuf.Duration execution_timeout = 4;
+  google.protobuf.Duration run_timeout = 5;
+  google.protobuf.Duration task_timeout = 6;
+  RetryPolicy retry_policy = 7;
+  string cron_schedule = 8;
+  map<string, string> annotations = 9;
+  map<string, string> labels = 10;
+  string started_by = 11;
+}
+
+// WorkflowExecutionCompletedEventAttributes contains completion details.
+message WorkflowExecutionCompletedEventAttributes {
+  bytes result = 1;
+  int64 execution_step_completed_event_id = 2;
+}
+
+// WorkflowExecutionFailedEventAttributes contains failure details.
+message WorkflowExecutionFailedEventAttributes {
+  Failure failure = 1;
+  RetryPolicy retry_policy = 2;
+  int64 execution_step_completed_event_id = 3;
+}
+
+// WorkflowExecutionTimedOutEventAttributes contains timeout details.
+message WorkflowExecutionTimedOutEventAttributes {
+  RetryPolicy retry_policy = 1;
+  int64 execution_step_timed_out_event_id = 2;
+}
+
+// WorkflowExecutionCanceledEventAttributes contains cancellation details.
+message WorkflowExecutionCanceledEventAttributes {
+  int64 execution_step_completed_event_id = 1;
+  bytes details = 2;
+}
+
+// WorkflowExecutionRestartedFreshEventAttributes contains restart-fresh details.
+message WorkflowExecutionRestartedFreshEventAttributes {
+  string new_execution_id = 1;
+  string workflow_type = 2;
+  string task_queue = 3;
+  bytes input = 4;
+  google.protobuf.Duration execution_timeout = 5;
+  google.protobuf.Duration run_timeout = 6;
+  google.protobuf.Duration task_timeout = 7;
+  RetryPolicy retry_policy = 8;
+  int64 execution_step_completed_event_id = 9;
+}
+
+// WorkflowExecutionCancelRequestedEventAttributes contains cancel request details.
+message WorkflowExecutionCancelRequestedEventAttributes {
+  string cause = 1;
+  string external_workflow_execution_id = 2;
+  string external_execution_id = 3;
+}
+
+// WorkflowExecutionTerminatedEventAttributes contains termination details.
+message WorkflowExecutionTerminatedEventAttributes {
+  string reason = 1;
+  bytes details = 2;
+  string identity = 3;
+}
+
+// ExecutionStepScheduledEventAttributes for scheduling execution steps.
+message ExecutionStepScheduledEventAttributes {
+  string task_queue = 1;
+  google.protobuf.Duration start_to_close_timeout = 2;
+  int32 attempt = 3;
+}
+
+// ExecutionStepStartedEventAttributes for starting execution steps.
+message ExecutionStepStartedEventAttributes {
+  int64 scheduled_event_id = 1;
+  string identity = 2;
+  google.protobuf.Timestamp started_time = 3;
+}
+
+// ExecutionStepCompletedEventAttributes for completed execution steps.
+message ExecutionStepCompletedEventAttributes {
+  int64 scheduled_event_id = 1;
+  int64 started_event_id = 2;
+  bytes binary_checksum = 3;
+}
+
+// ExecutionStepFailedEventAttributes for failed execution steps.
+message ExecutionStepFailedEventAttributes {
+  int64 scheduled_event_id = 1;
+  int64 started_event_id = 2;
+  Failure failure = 3;
+  RetryPolicy retry_policy = 4;
+}
+
+// ExecutionStepTimedOutEventAttributes for timed out execution steps.
+message ExecutionStepTimedOutEventAttributes {
+  int64 scheduled_event_id = 1;
+  int64 started_event_id = 2;
+  RetryPolicy retry_policy = 3;
+}
+
+// TaskScheduledEventAttributes for scheduled tasks.
+message TaskScheduledEventAttributes {
+  string task_id = 1;
+  string task_type = 2;
+  string task_queue = 3;
+  bytes input = 4;
+  google.protobuf.Duration schedule_to_start_timeout = 5;
+  google.protobuf.Duration start_to_close_timeout = 6;
+  google.protobuf.Duration heartbeat_timeout = 7;
+  RetryPolicy retry_policy = 8;
+  int64 execution_step_completed_event_id = 9;
+  map<string, bytes> headers = 10;
+}
+
+// TaskStartedEventAttributes for started tasks.
+message TaskStartedEventAttributes {
+  int64 scheduled_event_id = 1;
+  string identity = 2;
+  string request_id = 3;
+  int32 attempt = 4;
+}
+
+// TaskCompletedEventAttributes for completed tasks.
+message TaskCompletedEventAttributes {
+  int64 scheduled_event_id = 1;
+  int64 started_event_id = 2;
+  bytes result = 3;
+  string identity = 4;
+}
+
+// TaskFailedEventAttributes for failed tasks.
+message TaskFailedEventAttributes {
+  int64 scheduled_event_id = 1;
+  int64 started_event_id = 2;
+  Failure failure = 3;
+  RetryPolicy retry_policy = 4;
+  string identity = 5;
+}
+
+// TaskTimedOutEventAttributes for timed out tasks.
+message TaskTimedOutEventAttributes {
+  int64 scheduled_event_id = 1;
+  int64 started_event_id = 2;
+  RetryPolicy retry_policy = 3;
+}
+
+// TaskCancelRequestedEventAttributes for task cancellation requests.
+message TaskCancelRequestedEventAttributes {
+  int64 scheduled_event_id = 1;
+  int64 execution_step_completed_event_id = 2;
+}
+
+// TaskCanceledEventAttributes for canceled tasks.
+message TaskCanceledEventAttributes {
+  int64 scheduled_event_id = 1;
+  int64 started_event_id = 2;
+  bytes details = 3;
+  string identity = 4;
+}
+
+// TimerStartedEventAttributes for started timers.
+message TimerStartedEventAttributes {
+  string timer_id = 1;
+  google.protobuf.Duration start_to_fire_timeout = 2;
+  int64 execution_step_completed_event_id = 3;
+}
+
+// TimerFiredEventAttributes for fired timers.
+message TimerFiredEventAttributes {
+  int64 started_event_id = 1;
+  string timer_id = 2;
+}
+
+// TimerCanceledEventAttributes for canceled timers.
+message TimerCanceledEventAttributes {
+  int64 started_event_id = 1;
+  string timer_id = 2;
+  int64 execution_step_completed_event_id = 3;
+  string identity = 4;
+}
+
+// EventReceivedEventAttributes for received events (signals).
+message EventReceivedEventAttributes {
+  string event_name = 1;
+  bytes payload = 2;
+  string identity = 3;
+}
+
+// StepCompletedEventAttributes records the outcome of a step of any kind:
+// task, inline closure, child workflow or side effect.
+message StepCompletedEventAttributes {
+  string step_name = 1; // Unique step identifier (e.g., "fetch_user", "send_email")
+  StepType step_type = 2; // Type of step (task, closure, etc.)
+  bytes result = 3; // Serialized result (if successful)
+  Failure failure = 4; // Failure details (if failed)
+  int32 execution_attempt = 5; // Attempt number for this step
+  google.protobuf.Timestamp completed_at = 6; // Completion timestamp
+  int64 duration_ms = 7; // Execution duration in milliseconds
+}
+
+// ============================================================================
+// Update Event Attributes (synchronous workflow mutations)
+// ============================================================================
+
+// UpdateAcceptedEventAttributes records that an update was accepted for processing.
+message UpdateAcceptedEventAttributes {
+  string update_id = 1;        // Unique update identifier
+  string update_type = 2;      // Update handler name
+  bytes args = 3;              // Serialized update arguments
+  string identity = 4;         // Who sent the update
+}
+
+// UpdateCompletedEventAttributes records the result of a completed update.
+message UpdateCompletedEventAttributes {
+  string update_id = 1;        // Unique update identifier
+  string update_type = 2;      // Update handler name
+  bytes result = 3;            // Serialized result (if successful)
+  Failure failure = 4;         // Failure details (if failed/rejected)
+}
+
+// ============================================================================
+// Child Workflow Execution Event Attributes
+// ============================================================================
+
+// ChildWorkflowExecutionStartedEventAttributes for child workflow started.
+message ChildWorkflowExecutionStartedEventAttributes {
+  // Journal entry of the command that started the child.
+  int64 initiated_event_id = 1;
+
+  // Child workflow execution identifiers.
+  string workflow_id = 2;
+  string execution_id = 3;
+  string workflow_type = 4;
+
+  // Namespace the child runs in.
+  string namespace = 5;
+
+  // When the child started.
+  google.protobuf.Timestamp started_time = 6;
+}
+
+// ChildWorkflowExecutionCompletedEventAttributes for child workflow completed.
+message ChildWorkflowExecutionCompletedEventAttributes {
+  // Reference to started event
+  int64 initiated_event_id = 1;
+  int64 started_event_id = 2;
+
+  // Child workflow identifiers
+  string workflow_id = 3;
+  string execution_id = 4;
+
+  // Result from child workflow
+  bytes result = 5;
+
+  // Completion time
+  google.protobuf.Timestamp completed_time = 6;
+}
+
+// ChildWorkflowExecutionFailedEventAttributes for child workflow failed.
+message ChildWorkflowExecutionFailedEventAttributes {
+  // Reference to started event
+  int64 initiated_event_id = 1;
+  int64 started_event_id = 2;
+
+  // Child workflow identifiers
+  string workflow_id = 3;
+  string execution_id = 4;
+
+  // Failure details
+  Failure failure = 5;
+
+  // Retry policy (if retrying)
+  RetryPolicy retry_policy = 6;
+
+  // Failure time
+  google.protobuf.Timestamp failed_time = 7;
+}
+
+// TimeoutType identifies which timeout a workflow hit.
+enum TimeoutType {
+  TIMEOUT_TYPE_UNSPECIFIED = 0;
+  TIMEOUT_TYPE_START_TO_CLOSE = 1; // Overall timeout from start to close
+  TIMEOUT_TYPE_EXECUTION = 2; // The workflow's execution_timeout
+  TIMEOUT_TYPE_RUN = 3; // The workflow's run_timeout, for a single run
+}
+
+// ChildWorkflowExecutionTimedOutEventAttributes for child workflow timed out.
+message ChildWorkflowExecutionTimedOutEventAttributes {
+  // Reference to started event
+  int64 initiated_event_id = 1;
+  int64 started_event_id = 2;
+
+  // Child workflow identifiers
+  string workflow_id = 3;
+  string execution_id = 4;
+
+  // Timeout type
+  TimeoutType timeout_type = 5;
+
+  // Retry policy
+  RetryPolicy retry_policy = 6;
+}
+
+// ChildWorkflowExecutionCanceledEventAttributes for child workflow canceled.
+message ChildWorkflowExecutionCanceledEventAttributes {
+  // Reference to started event
+  int64 initiated_event_id = 1;
+  int64 started_event_id = 2;
+
+  // Child workflow identifiers
+  string workflow_id = 3;
+  string execution_id = 4;
+
+  // Cancellation details
+  bytes details = 5;
+
+  // Canceled time
+  google.protobuf.Timestamp canceled_time = 6;
+}
+
+// ChildWorkflowExecutionTerminatedEventAttributes for child workflow terminated.
+message ChildWorkflowExecutionTerminatedEventAttributes {
+  // Reference to started event
+  int64 initiated_event_id = 1;
+  int64 started_event_id = 2;
+
+  // Child workflow identifiers
+  string workflow_id = 3;
+  string execution_id = 4;
+
+  // Termination reason
+  string reason = 5;
+  bytes details = 6;
+
+  // Terminated time
+  google.protobuf.Timestamp terminated_time = 7;
+}
+
+// JournalEntry is one entry in a workflow's execution journal, the
+// event-sourced history a worker replays to rebuild workflow state.
+message JournalEntry {
+  // Entry ID: a sequence number that increases monotonically within the
+  // execution.
+  int64 entry_id = 1;
+
+  // When the entry was recorded.
+  google.protobuf.Timestamp timestamp = 2;
+
+  // What happened.
+  EntryType entry_type = 3;
+
+  // Entry version.
+  int64 version = 4;
+
+  // The task this entry relates to, if any.
+  int64 task_id = 5;
+
+  // Entry-specific attributes; the one set matches entry_type.
+  oneof attributes {
+    WorkflowExecutionStartedEventAttributes workflow_execution_started = 10;
+    WorkflowExecutionCompletedEventAttributes workflow_execution_completed = 11;
+    WorkflowExecutionFailedEventAttributes workflow_execution_failed = 12;
+    WorkflowExecutionTimedOutEventAttributes workflow_execution_timed_out = 13;
+    WorkflowExecutionCanceledEventAttributes workflow_execution_canceled = 14;
+    WorkflowExecutionRestartedFreshEventAttributes workflow_execution_restarted_fresh = 15;
+
+    ExecutionStepScheduledEventAttributes execution_step_scheduled = 20;
+    ExecutionStepStartedEventAttributes execution_step_started = 21;
+    ExecutionStepCompletedEventAttributes execution_step_completed = 22;
+    ExecutionStepFailedEventAttributes execution_step_failed = 23;
+    ExecutionStepTimedOutEventAttributes execution_step_timed_out = 24;
+
+    TaskScheduledEventAttributes task_scheduled = 30;
+    TaskStartedEventAttributes task_started = 31;
+    TaskCompletedEventAttributes task_completed = 32;
+    TaskFailedEventAttributes task_failed = 33;
+    TaskTimedOutEventAttributes task_timed_out = 34;
+    TaskCancelRequestedEventAttributes task_cancel_requested = 35;
+    TaskCanceledEventAttributes task_canceled = 36;
+
+    TimerStartedEventAttributes timer_started = 40;
+    TimerFiredEventAttributes timer_fired = 41;
+    TimerCanceledEventAttributes timer_canceled = 42;
+
+    EventReceivedEventAttributes event_received = 50;
+
+    WorkflowExecutionCancelRequestedEventAttributes workflow_execution_cancel_requested = 60;
+    WorkflowExecutionTerminatedEventAttributes workflow_execution_terminated = 61;
+
+    ChildWorkflowExecutionStartedEventAttributes child_workflow_execution_started = 70;
+    ChildWorkflowExecutionCompletedEventAttributes child_workflow_execution_completed = 71;
+    ChildWorkflowExecutionFailedEventAttributes child_workflow_execution_failed = 72;
+    ChildWorkflowExecutionTimedOutEventAttributes child_workflow_execution_timed_out = 73;
+    ChildWorkflowExecutionCanceledEventAttributes child_workflow_execution_canceled = 74;
+    ChildWorkflowExecutionTerminatedEventAttributes child_workflow_execution_terminated = 75;
+
+    StepCompletedEventAttributes step_completed = 80;
+
+    UpdateAcceptedEventAttributes update_accepted = 90;
+    UpdateCompletedEventAttributes update_completed = 91;
+  }
+}
+
+// ============================================================================
+// Command Types and Attributes
+// ============================================================================
+
+// CommandType identifies a command a workflow sends to the server.
+enum CommandType {
+  COMMAND_TYPE_UNSPECIFIED = 0;
+  COMMAND_TYPE_SCHEDULE_TASK = 1;
+  COMMAND_TYPE_START_TIMER = 2;
+  COMMAND_TYPE_CANCEL_TIMER = 3;
+  COMMAND_TYPE_COMPLETE_WORKFLOW = 4;
+  COMMAND_TYPE_FAIL_WORKFLOW = 5;
+  COMMAND_TYPE_CANCEL_WORKFLOW = 6;
+  COMMAND_TYPE_RESTART_FRESH = 7;
+  COMMAND_TYPE_REQUEST_CANCEL_TASK = 8;
+  COMMAND_TYPE_START_CHILD_WORKFLOW = 9;
+  COMMAND_TYPE_CANCEL_CHILD_WORKFLOW = 10;
+  COMMAND_TYPE_SEND_EVENT = 11;
+  COMMAND_TYPE_REQUEST_CANCELLATION = 12;
+  COMMAND_TYPE_QUERY_CHILD_WORKFLOW = 13;
+  COMMAND_TYPE_RECORD_STEP_RESULT = 14;
+  COMMAND_TYPE_UPSERT_LABELS = 15;
+}
+
+// ScheduleTaskCommandAttributes for scheduling a task.
+message ScheduleTaskCommandAttributes {
+  string task_id = 1;
+  string task_type = 2;
+  string task_queue = 3;
+  bytes input = 4;
+  google.protobuf.Duration schedule_to_start_timeout = 5;
+  google.protobuf.Duration start_to_close_timeout = 6;
+  google.protobuf.Duration heartbeat_timeout = 7;
+  RetryPolicy retry_policy = 8;
+  map<string, bytes> headers = 9;
+}
+
+// StartTimerCommandAttributes for starting a timer.
+message StartTimerCommandAttributes {
+  string timer_id = 1;
+  google.protobuf.Duration start_to_fire_timeout = 2;
+}
+
+// CancelTimerCommandAttributes for canceling a timer.
+message CancelTimerCommandAttributes {
+  string timer_id = 1;
+}
+
+// CompleteWorkflowCommandAttributes for completing a workflow.
+message CompleteWorkflowCommandAttributes {
+  bytes result = 1;
+}
+
+// FailWorkflowCommandAttributes for failing a workflow.
+message FailWorkflowCommandAttributes {
+  Failure failure = 1;
+}
+
+// CancelWorkflowCommandAttributes for canceling a workflow.
+message CancelWorkflowCommandAttributes {
+  bytes details = 1;
+}
+
+// RestartFreshCommandAttributes ends the current execution and starts a new
+// one of the same workflow with fresh state and an empty journal.
+message RestartFreshCommandAttributes {
+  string workflow_type = 1;
+  string task_queue = 2;
+  bytes input = 3;
+  google.protobuf.Duration execution_timeout = 4;
+  google.protobuf.Duration run_timeout = 5;
+  google.protobuf.Duration task_timeout = 6;
+  RetryPolicy retry_policy = 7;
+  map<string, string> annotations = 8;
+  map<string, string> labels = 9;
+}
+
+// RequestCancelTaskCommandAttributes for requesting task cancellation.
+message RequestCancelTaskCommandAttributes {
+  int64 scheduled_event_id = 1;
+}
+
+// StartChildWorkflowCommandAttributes for starting a child workflow.
+message StartChildWorkflowCommandAttributes {
+  string workflow_id = 1;
+  string workflow_type = 2;
+  string task_queue = 3;
+  bytes input = 4;
+  google.protobuf.Duration execution_timeout = 5;
+  google.protobuf.Duration run_timeout = 6;
+  google.protobuf.Duration task_timeout = 7;
+  OrphanPolicy orphan_policy = 8;
+  RetryPolicy retry_policy = 9;
+  string namespace = 10;
+  map<string, string> annotations = 11;
+  map<string, string> labels = 12;
+}
+
+// WorkflowIdReusePolicy decides whether a start may use a workflow_id that
+// another execution in the same namespace already carries.
+//
+// An id whose execution is still open is never started a second time: every
+// policy but TERMINATE_IF_RUNNING refuses it with ALREADY_EXISTS. The policies
+// differ in what they allow once the previous execution has closed. An
+// execution that is being retried, or that restarted fresh, is still open.
+enum WorkflowIdReusePolicy {
+  // The server default, ALLOW_DUPLICATE.
+  WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED = 0;
+  // Start once the previous execution has closed, however it closed.
+  WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE = 1;
+  // Start once the previous execution has closed without completing: failed,
+  // canceled, terminated or timed out. A completed one refuses the start.
+  WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY = 2;
+  // Never start an id that an execution has carried before.
+  WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE = 3;
+  // Terminate the open execution, if there is one, and start. A closed one is
+  // reused as under ALLOW_DUPLICATE.
+  WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING = 4;
+}
+
+// OrphanPolicy defines what happens to a child workflow when its parent closes.
+enum OrphanPolicy {
+  ORPHAN_POLICY_UNSPECIFIED = 0;
+  ORPHAN_POLICY_TERMINATE = 1;
+  ORPHAN_POLICY_CANCEL = 2;
+  ORPHAN_POLICY_ABANDON = 3;
+}
+
+// CancelChildWorkflowCommandAttributes for canceling a child workflow.
+message CancelChildWorkflowCommandAttributes {
+  string workflow_id = 1;
+  string run_id = 2;
+}
+
+// SendEventCommandAttributes for sending an event to a workflow.
+message SendEventCommandAttributes {
+  string workflow_id = 1;
+  string run_id = 2;
+  string event_name = 3;
+  bytes payload = 4;
+  map<string, bytes> headers = 5;
+}
+
+// RequestCancellationCommandAttributes for requesting workflow cancellation.
+message RequestCancellationCommandAttributes {
+  string reason = 1;
+}
+
+// QueryChildWorkflowCommandAttributes for querying child workflows.
+message QueryChildWorkflowCommandAttributes {
+  string workflow_id = 1;
+  string run_id = 2;
+  string query_type = 3;
+  bytes query_args = 4;
+}
+
+// RecordStepResultCommandAttributes records the result of a step the SDK ran
+// itself, typically an inline closure, so that replay returns the recorded
+// result instead of running the step again.
+message RecordStepResultCommandAttributes {
+  string step_name = 1; // Unique step identifier
+  StepType step_type = 2; // Type of step (typically STEP_TYPE_CLOSURE)
+  bytes result = 3; // Serialized result (if successful)
+  Failure failure = 4; // Failure details (if failed)
+  int32 execution_attempt = 5; // Attempt number for this step
+}
+
+// UpsertLabelsCommandAttributes for updating labels on a running workflow.
+message UpsertLabelsCommandAttributes {
+  map<string, string> labels = 1;
+}
+
+// Command is an instruction a workflow sends to the server when it completes
+// a workflow execution step.
+message Command {
+  // Command type.
+  CommandType command_type = 1;
+
+  // Command-specific attributes; the one set matches command_type.
+  oneof attributes {
+    ScheduleTaskCommandAttributes schedule_task = 10;
+    StartTimerCommandAttributes start_timer = 11;
+    CancelTimerCommandAttributes cancel_timer = 12;
+    CompleteWorkflowCommandAttributes complete_workflow = 13;
+    FailWorkflowCommandAttributes fail_workflow = 14;
+    CancelWorkflowCommandAttributes cancel_workflow = 15;
+    RestartFreshCommandAttributes restart_fresh = 16;
+    RequestCancelTaskCommandAttributes request_cancel_task = 17;
+    StartChildWorkflowCommandAttributes start_child_workflow = 18;
+    CancelChildWorkflowCommandAttributes cancel_child_workflow = 19;
+    SendEventCommandAttributes send_event = 20;
+    RequestCancellationCommandAttributes request_cancellation = 21;
+    QueryChildWorkflowCommandAttributes query_child_workflow = 22;
+    RecordStepResultCommandAttributes record_step_result = 23;
+    UpsertLabelsCommandAttributes upsert_labels = 24;
+  }
+}

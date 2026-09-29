@@ -1,0 +1,580 @@
+syntax = "proto3";
+
+package orcher.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "types.proto";
+
+// WorkflowService provides the client API for starting and managing workflows.
+// This is the primary interface for applications to interact with ORCHER.
+service WorkflowService {
+  // StartWorkflow initiates a new workflow execution.
+  //
+  // A workflow_id names at most one open execution in a namespace. Starting
+  // an id whose execution is still open fails with ALREADY_EXISTS, unless the
+  // request's workflow_id_reuse_policy is TERMINATE_IF_RUNNING; a closed
+  // execution is reused as that policy allows. Every ALREADY_EXISTS from this
+  // call names the execution in the way in its trailing metadata:
+  // `x-orcher-workflow-id` and `x-orcher-execution-id`.
+  rpc StartWorkflow(StartWorkflowRequest) returns (StartWorkflowResponse);
+
+  // SendEvent sends an event (external message) to a running workflow.
+  rpc SendEvent(SendEventRequest) returns (SendEventResponse);
+
+  // SendEventWithStartWorkflow sends an event to a workflow, starting it first
+  // if it is not running. A running workflow receives the event as usual; a
+  // workflow that is not running is started with the event already in its
+  // journal.
+  rpc SendEventWithStartWorkflow(SendEventWithStartWorkflowRequest) returns (SendEventWithStartWorkflowResponse);
+
+  // QueryWorkflow queries the current state of a workflow.
+  rpc QueryWorkflow(QueryWorkflowRequest) returns (QueryWorkflowResponse);
+
+  // CancelWorkflow requests cancellation of a workflow execution.
+  rpc CancelWorkflow(CancelWorkflowRequest) returns (CancelWorkflowResponse);
+
+  // TerminateWorkflow forcefully terminates a workflow execution.
+  rpc TerminateWorkflow(TerminateWorkflowRequest) returns (TerminateWorkflowResponse);
+
+  // ResetWorkflow rewinds a workflow execution to a point in its journal and
+  // runs it again from there. It creates a new execution that replays the
+  // journal up to the target entry and makes fresh decisions after it.
+  rpc ResetWorkflow(ResetWorkflowRequest) returns (ResetWorkflowResponse);
+
+  // GetWorkflowStatus retrieves the current status of a workflow execution.
+  rpc GetWorkflowStatus(GetWorkflowStatusRequest) returns (GetWorkflowStatusResponse);
+
+  // GetWorkflowResult waits for and returns the result of a workflow execution.
+  rpc GetWorkflowResult(GetWorkflowResultRequest) returns (GetWorkflowResultResponse);
+
+  // UpdateWorkflow sends a synchronous update to a running workflow and
+  // returns its result. The update handler can read and modify workflow
+  // state. Unlike a query, an update and its result are recorded in the
+  // journal, so replay reproduces them.
+  rpc UpdateWorkflow(UpdateWorkflowRequest) returns (UpdateWorkflowResponse);
+
+  // BatchCancelWorkflow cancels all workflows matching a filter.
+  rpc BatchCancelWorkflow(BatchCancelWorkflowRequest) returns (BatchCancelWorkflowResponse);
+
+  // BatchTerminateWorkflow terminates all workflows matching a filter.
+  rpc BatchTerminateWorkflow(BatchTerminateWorkflowRequest) returns (BatchTerminateWorkflowResponse);
+
+  // BatchSendEvent sends an event to all workflows matching a filter.
+  rpc BatchSendEvent(BatchSendEventRequest) returns (BatchSendEventResponse);
+
+  // BatchStartWorkflow starts several workflows atomically: if any of them
+  // fails validation, none is started. It is much faster than calling
+  // StartWorkflow once per workflow, because the server commits the whole
+  // batch at once.
+  rpc BatchStartWorkflow(BatchStartWorkflowRequest) returns (BatchStartWorkflowResponse);
+}
+
+// StartWorkflowRequest initiates a new workflow execution.
+message StartWorkflowRequest {
+  // Identifier for the workflow. If empty, the server generates one.
+  string workflow_id = 1;
+
+  // The type of workflow to execute (e.g., "OrderProcessing").
+  string workflow_type = 2;
+
+  // The task queue to route this workflow to.
+  string task_queue = 3;
+
+  // Namespace to start the workflow in (defaults to "default").
+  string namespace = 4;
+
+  // Serialized input data for the workflow.
+  bytes input = 5;
+
+  // Optional: Execution timeout, covering the workflow across all runs.
+  google.protobuf.Duration execution_timeout = 6;
+
+  // Optional: Run timeout, covering a single run.
+  google.protobuf.Duration run_timeout = 7;
+
+  // Optional: Default timeout for the workflow's tasks.
+  google.protobuf.Duration task_timeout = 8;
+
+  // Optional: Retry policy for the workflow.
+  RetryPolicy retry_policy = 9;
+
+  // Optional: Cron schedule for periodic workflow execution.
+  string cron_schedule = 10;
+
+  // Optional: Annotations, non-indexed key-value metadata attached to the
+  // workflow.
+  map<string, string> annotations = 11;
+
+  // Optional: Labels, indexed key-value metadata that workflows can be
+  // filtered and searched by.
+  map<string, string> labels = 12;
+
+  // Optional: Request ID that makes the start idempotent.
+  string request_id = 13;
+
+  // Optional: Delay before the first execution attempt.
+  google.protobuf.Duration start_delay = 14;
+
+  // Optional: Full schedule configuration for periodic execution. When set,
+  // the server creates or updates a schedule instead of starting the
+  // workflow immediately. When only cron_schedule is set, it is used with
+  // the default schedule configuration.
+  ScheduleConfig schedule_config = 15;
+
+  // Optional: What to do when workflow_id is already in use in this
+  // namespace. Unset means ALLOW_DUPLICATE.
+  WorkflowIdReusePolicy workflow_id_reuse_policy = 16;
+}
+
+// ScheduleConfig configures periodic workflow execution with a cron expression.
+// Sent by SDKs during workflow registration to set up server-side scheduling.
+message ScheduleConfig {
+  // Cron expression (e.g., "0 0 9 * * MON-FRI" for weekdays at 9am).
+  // Uses 6-field cron format (sec min hour day month weekday).
+  string cron_expression = 1;
+
+  // IANA timezone for schedule evaluation (e.g., "America/New_York").
+  // Defaults to "UTC" if empty.
+  string timezone = 2;
+
+  // What to do when a run is due while the previous one is still running:
+  // "skip", "parallel", "replace" or "queue". Defaults to "skip".
+  string overlap_policy = 3;
+
+  // Maximum number of runs at once, used by the "parallel" policy.
+  int32 max_instances = 4;
+
+  // Optional: Earliest time to start scheduling.
+  google.protobuf.Timestamp start_date = 5;
+
+  // Optional: Latest time to run; the schedule completes after it.
+  google.protobuf.Timestamp end_date = 6;
+
+  // Optional: Number of runs after which the schedule completes.
+  int64 max_runs = 7;
+}
+
+// StartWorkflowResponse contains the identifiers for the started workflow.
+message StartWorkflowResponse {
+  // The workflow ID (either provided or generated).
+  string workflow_id = 1;
+
+  // Identifier of the execution that was started.
+  string execution_id = 2;
+
+  // Timestamp when the workflow was started.
+  google.protobuf.Timestamp started_at = 3;
+}
+
+// SendEventRequest sends an event to a running workflow.
+message SendEventRequest {
+  // The workflow ID to send the event to.
+  string workflow_id = 1;
+
+  // Optional: Specific execution ID. If omitted, the event goes to the
+  // current execution.
+  string execution_id = 2;
+
+  // Namespace of the workflow.
+  string namespace = 3;
+
+  // Name of the event (e.g., "approval_received").
+  string event_name = 4;
+
+  // Serialized event payload.
+  bytes payload = 5;
+
+  // Optional: Request ID that makes the send idempotent.
+  string request_id = 6;
+}
+
+// SendEventResponse confirms event delivery.
+message SendEventResponse {
+  // True if the event was recorded.
+  bool recorded = 1;
+}
+
+// SendEventWithStartWorkflowRequest sends an event, starting the workflow
+// first if it is not running.
+message SendEventWithStartWorkflowRequest {
+  // The workflow ID to send the event to or start.
+  string workflow_id = 1;
+
+  // Namespace of the workflow.
+  string namespace = 2;
+
+  // Name of the event (e.g., "approval_received").
+  string event_name = 3;
+
+  // Serialized event payload.
+  bytes event_payload = 4;
+
+  // The remaining fields are used only if the workflow has to be started.
+
+  // The type of workflow to execute (e.g., "OrderProcessing").
+  string workflow_type = 5;
+
+  // The task queue to route this workflow to.
+  string task_queue = 6;
+
+  // Serialized input data for the workflow.
+  bytes workflow_input = 7;
+
+  // Optional: Execution timeout, covering the workflow across all runs.
+  google.protobuf.Duration execution_timeout = 8;
+
+  // Optional: Run timeout, covering a single run.
+  google.protobuf.Duration run_timeout = 9;
+
+  // Optional: Default timeout for the workflow's tasks.
+  google.protobuf.Duration task_timeout = 10;
+
+  // Optional: Retry policy for the workflow.
+  RetryPolicy retry_policy = 11;
+
+  // Optional: Annotations, non-indexed key-value metadata attached to the
+  // workflow.
+  map<string, string> annotations = 12;
+
+  // Optional: Labels, indexed key-value metadata that workflows can be
+  // filtered and searched by.
+  map<string, string> labels = 13;
+
+  // Optional: Request ID that makes the call idempotent.
+  string request_id = 14;
+}
+
+// SendEventWithStartWorkflowResponse contains workflow identifiers.
+message SendEventWithStartWorkflowResponse {
+  // The workflow ID.
+  string workflow_id = 1;
+
+  // Execution ID of the execution that received the event.
+  string execution_id = 2;
+
+  // True if the workflow was started, false if the event went to a workflow
+  // that was already running.
+  bool workflow_started = 3;
+
+  // When the operation happened.
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// QueryWorkflowRequest queries the current state of a workflow.
+message QueryWorkflowRequest {
+  // The workflow ID to query.
+  string workflow_id = 1;
+
+  // Optional: Specific execution ID.
+  string execution_id = 2;
+
+  // Namespace of the workflow.
+  string namespace = 3;
+
+  // Name of the query handler to invoke.
+  string query_type = 4;
+
+  // Serialized query arguments.
+  bytes query_args = 5;
+}
+
+// QueryWorkflowResponse contains the query result.
+message QueryWorkflowResponse {
+  // Serialized query result.
+  bytes result = 1;
+}
+
+// CancelWorkflowRequest requests graceful cancellation of a workflow.
+message CancelWorkflowRequest {
+  // The workflow ID to cancel.
+  string workflow_id = 1;
+
+  // Optional: Specific execution ID.
+  string execution_id = 2;
+
+  // Namespace of the workflow.
+  string namespace = 3;
+
+  // Optional: Reason for cancellation.
+  string reason = 4;
+
+  // Optional: Request ID that makes the cancellation idempotent.
+  string request_id = 5;
+}
+
+// CancelWorkflowResponse confirms the cancellation request.
+message CancelWorkflowResponse {
+  // True if cancellation was requested.
+  bool requested = 1;
+}
+
+// TerminateWorkflowRequest forcefully terminates a workflow.
+message TerminateWorkflowRequest {
+  // The workflow ID to terminate.
+  string workflow_id = 1;
+
+  // Optional: Specific execution ID.
+  string execution_id = 2;
+
+  // Namespace of the workflow.
+  string namespace = 3;
+
+  // Reason for termination.
+  string reason = 4;
+
+  // Optional: Additional details.
+  bytes details = 5;
+}
+
+// TerminateWorkflowResponse confirms termination.
+message TerminateWorkflowResponse {
+  // True if the workflow was terminated.
+  bool terminated = 1;
+}
+
+// ResetWorkflowRequest rewinds a workflow to a specific journal point.
+message ResetWorkflowRequest {
+  // The workflow ID to reset.
+  string workflow_id = 1;
+
+  // Optional: Specific execution ID to reset. If empty, resets the latest execution.
+  string execution_id = 2;
+
+  // Namespace of the workflow.
+  string namespace = 3;
+
+  // The journal entry to reset to. Entries up to and including it are kept;
+  // later ones are discarded, and the workflow runs again from this point,
+  // making fresh decisions.
+  int64 target_event_id = 4;
+
+  // Human-readable reason for the reset, recorded in the journal.
+  string reason = 5;
+}
+
+// ResetWorkflowResponse contains the new execution details.
+message ResetWorkflowResponse {
+  // The new execution ID created by the reset.
+  string new_execution_id = 1;
+
+  // The execution that was reset. It ends in the terminal RESET status.
+  string old_execution_id = 2;
+}
+
+// GetWorkflowStatusRequest retrieves workflow status.
+message GetWorkflowStatusRequest {
+  // The workflow ID to check.
+  string workflow_id = 1;
+
+  // Optional: Specific execution ID.
+  string execution_id = 2;
+
+  // Namespace of the workflow.
+  string namespace = 3;
+}
+
+// GetWorkflowStatusResponse contains workflow status information.
+message GetWorkflowStatusResponse {
+  // Current status of the workflow.
+  WorkflowStatus status = 1;
+
+  // Workflow execution identifiers.
+  WorkflowExecution execution = 2;
+
+  // Timestamp when workflow started.
+  google.protobuf.Timestamp started_at = 3;
+
+  // Timestamp when workflow completed (if finished).
+  google.protobuf.Timestamp completed_at = 4;
+
+  // Result or error, once the workflow has finished.
+  oneof outcome {
+    bytes result = 5;
+    string error = 6;
+  }
+}
+
+// GetWorkflowResultRequest waits for workflow completion and returns result.
+message GetWorkflowResultRequest {
+  // The workflow ID to wait for.
+  string workflow_id = 1;
+
+  // Optional: Specific execution ID.
+  string execution_id = 2;
+
+  // Namespace of the workflow.
+  string namespace = 3;
+
+  // Optional: How long to wait. The call blocks until the workflow finishes
+  // or this timeout passes.
+  google.protobuf.Duration timeout = 4;
+}
+
+// GetWorkflowResultResponse contains the workflow result.
+message GetWorkflowResultResponse {
+  // Workflow execution identifiers.
+  WorkflowExecution execution = 1;
+
+  // Final status.
+  WorkflowStatus status = 2;
+
+  // Workflow result or error.
+  oneof outcome {
+    bytes result = 3;
+    string error = 4;
+  }
+
+  // Timestamp when workflow completed.
+  google.protobuf.Timestamp completed_at = 5;
+}
+
+// UpdateWorkflowRequest sends a synchronous mutation to a running workflow.
+message UpdateWorkflowRequest {
+  // The workflow ID to update.
+  string workflow_id = 1;
+
+  // Optional: Specific execution ID.
+  string execution_id = 2;
+
+  // Namespace of the workflow.
+  string namespace = 3;
+
+  // Name of the update handler to invoke.
+  string update_type = 4;
+
+  // Serialized update arguments.
+  bytes args = 5;
+
+  // Optional: Update ID that makes the update idempotent. If empty, the
+  // server generates one.
+  string update_id = 6;
+}
+
+// UpdateWorkflowResponse contains the update result.
+message UpdateWorkflowResponse {
+  // The update ID (either provided or generated).
+  string update_id = 1;
+
+  // Update outcome.
+  oneof outcome {
+    // Serialized update result (if successful).
+    bytes result = 2;
+
+    // Failure details (if the update was rejected or failed).
+    Failure failure = 3;
+  }
+}
+
+// ============================================================================
+// Batch Operations
+// ============================================================================
+
+// BatchOperationFilter selects workflows for bulk operations.
+message BatchOperationFilter {
+  // Namespace (required).
+  string namespace = 1;
+
+  // Filter by current status (e.g. "running", "pending").
+  string status = 2;
+
+  // Filter by workflow type (exact match).
+  string workflow_type = 3;
+
+  // Filter by labels: a workflow matches if it carries every label given here
+  // with the same value.
+  map<string, string> labels = 4;
+
+  // Filter: workflows started after this time.
+  google.protobuf.Timestamp started_after = 5;
+
+  // Filter: workflows started before this time.
+  google.protobuf.Timestamp started_before = 6;
+}
+
+// BatchCancelWorkflowRequest cancels all workflows matching the filter.
+message BatchCancelWorkflowRequest {
+  // Filter to select target workflows.
+  BatchOperationFilter filter = 1;
+
+  // Reason for cancellation.
+  string reason = 2;
+}
+
+// BatchCancelWorkflowResponse contains the operation result.
+message BatchCancelWorkflowResponse {
+  // Summary of the batch operation.
+  BatchOperationResult result = 1;
+}
+
+// BatchTerminateWorkflowRequest terminates all workflows matching the filter.
+message BatchTerminateWorkflowRequest {
+  // Filter to select target workflows.
+  BatchOperationFilter filter = 1;
+
+  // Reason for termination.
+  string reason = 2;
+}
+
+// BatchTerminateWorkflowResponse contains the operation result.
+message BatchTerminateWorkflowResponse {
+  // Summary of the batch operation.
+  BatchOperationResult result = 1;
+}
+
+// BatchSendEventRequest sends an event to all workflows matching the filter.
+message BatchSendEventRequest {
+  // Filter to select target workflows.
+  BatchOperationFilter filter = 1;
+
+  // Name of the event to send.
+  string event_name = 2;
+
+  // Serialized event payload.
+  bytes payload = 3;
+}
+
+// BatchSendEventResponse contains the operation result.
+message BatchSendEventResponse {
+  // Summary of the batch operation.
+  BatchOperationResult result = 1;
+}
+
+// BatchOperationResult summarizes a batch operation.
+message BatchOperationResult {
+  // Total workflows that matched the filter.
+  int64 total_matched = 1;
+
+  // Workflows successfully processed.
+  int64 total_succeeded = 2;
+
+  // Workflows that failed to process.
+  int64 total_failed = 3;
+
+  // Workflows skipped because they had already closed.
+  int64 total_skipped = 4;
+
+  // Details of individual failures (capped at 100).
+  repeated BatchOperationError errors = 5;
+}
+
+// BatchOperationError describes a failure for a single workflow.
+message BatchOperationError {
+  // The execution ID that failed.
+  string execution_id = 1;
+
+  // Error description.
+  string error = 2;
+}
+
+// BatchStartWorkflowRequest starts several workflows atomically.
+message BatchStartWorkflowRequest {
+  // The workflows to start. All must target the same namespace.
+  repeated StartWorkflowRequest workflows = 1;
+}
+
+// BatchStartWorkflowResponse returns the execution identifiers for all started workflows.
+message BatchStartWorkflowResponse {
+  // One entry per started workflow, in request order.
+  repeated StartWorkflowResponse executions = 1;
+}

@@ -1,0 +1,50 @@
+name: CI
+
+# Runs on GitHub-hosted runners only. Pull requests from forks run here too,
+# so this workflow must never target a self-hosted runner or read secrets.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - name: Docs build without warnings
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+      # Builds the crate exactly as crates.io would receive it.
+      - run: cargo package
+
+  # A published field number or type can never change: clients built against
+  # an older release must keep working. buf compares the pull request with its
+  # base branch and fails on any wire- or JSON-incompatible change.
+  breaking:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+      - run: buf breaking --against ".git#branch=origin/${{ github.base_ref }}"

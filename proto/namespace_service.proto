@@ -1,0 +1,155 @@
+syntax = "proto3";
+
+package orcher.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// NamespaceService creates, reads, updates and deletes namespaces.
+//
+// A namespace isolates workflow executions, task queues and services. It must
+// be created before use, and its name is unique within an organization.
+service NamespaceService {
+  // CreateNamespace registers a new namespace.
+  rpc CreateNamespace(CreateNamespaceRequest) returns (CreateNamespaceResponse);
+
+  // GetNamespace retrieves details of a specific namespace.
+  rpc GetNamespace(GetNamespaceRequest) returns (GetNamespaceResponse);
+
+  // ListNamespaces returns all namespaces accessible to the caller.
+  rpc ListNamespaces(ListNamespacesRequest) returns (ListNamespacesResponse);
+
+  // UpdateNamespace modifies namespace metadata.
+  rpc UpdateNamespace(UpdateNamespaceRequest) returns (UpdateNamespaceResponse);
+
+  // DeprecateNamespace marks a namespace as deprecated (no new workflows allowed).
+  rpc DeprecateNamespace(DeprecateNamespaceRequest) returns (DeprecateNamespaceResponse);
+
+  // DeleteNamespace soft-deletes a namespace.
+  rpc DeleteNamespace(DeleteNamespaceRequest) returns (DeleteNamespaceResponse);
+}
+
+// NamespaceInfo contains namespace metadata.
+message NamespaceInfo {
+  // Unique name of the namespace.
+  string name = 1;
+
+  // Current status: "active", "deprecated", or "deleted".
+  string status = 2;
+
+  // Human-readable description.
+  string description = 3;
+
+  // Email of the namespace owner.
+  string owner_email = 4;
+
+  // How long completed workflow data is retained (in days).
+  int32 retention_period_days = 5;
+
+  // Arbitrary key-value data for extensions.
+  map<string, string> data = 6;
+
+  // When the namespace was created.
+  google.protobuf.Timestamp created_at = 7;
+
+  // When the namespace was last updated.
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// CreateNamespaceRequest registers a new namespace.
+message CreateNamespaceRequest {
+  // Unique namespace name (1-100 chars, alphanumeric, hyphens, underscores).
+  string name = 1;
+
+  // Human-readable description.
+  string description = 2;
+
+  // How long completed workflow data is retained (in days, must be > 0).
+  int32 retention_period_days = 3;
+
+  // Email of the namespace owner.
+  string owner_email = 4;
+
+  // Arbitrary key-value data for extensions.
+  map<string, string> data = 5;
+}
+
+// CreateNamespaceResponse confirms namespace creation.
+message CreateNamespaceResponse {
+  // The created namespace details.
+  NamespaceInfo namespace = 1;
+}
+
+// GetNamespaceRequest retrieves a namespace by name.
+message GetNamespaceRequest {
+  // The namespace name to look up.
+  string name = 1;
+}
+
+// GetNamespaceResponse contains namespace details.
+message GetNamespaceResponse {
+  // The namespace details.
+  NamespaceInfo namespace = 1;
+}
+
+// ListNamespacesRequest lists accessible namespaces.
+message ListNamespacesRequest {
+  // Maximum number of results (default 100).
+  int32 page_size = 1;
+
+  // Offset for pagination.
+  int32 page_offset = 2;
+}
+
+// ListNamespacesResponse contains a page of namespaces.
+message ListNamespacesResponse {
+  // List of namespace details.
+  repeated NamespaceInfo namespaces = 1;
+
+  // Total count of matching namespaces.
+  int64 total_count = 2;
+}
+
+// UpdateNamespaceRequest modifies namespace metadata.
+message UpdateNamespaceRequest {
+  // The namespace name to update.
+  string name = 1;
+
+  // Updated description (empty string means no change).
+  string description = 2;
+
+  // Updated owner email (empty string means no change).
+  string owner_email = 3;
+
+  // Updated retention period (0 means no change).
+  int32 retention_period_days = 4;
+
+  // Updated key-value data (replaces existing data).
+  map<string, string> data = 5;
+}
+
+// UpdateNamespaceResponse confirms the update.
+message UpdateNamespaceResponse {
+  // The updated namespace details.
+  NamespaceInfo namespace = 1;
+}
+
+// DeprecateNamespaceRequest marks a namespace as deprecated.
+message DeprecateNamespaceRequest {
+  // The namespace name to deprecate.
+  string name = 1;
+}
+
+// DeprecateNamespaceResponse confirms deprecation.
+message DeprecateNamespaceResponse {
+  // The deprecated namespace details.
+  NamespaceInfo namespace = 1;
+}
+
+// DeleteNamespaceRequest soft-deletes a namespace.
+message DeleteNamespaceRequest {
+  // The namespace name to delete.
+  string name = 1;
+}
+
+// DeleteNamespaceResponse confirms deletion.
+message DeleteNamespaceResponse {}

@@ -1,0 +1,504 @@
+syntax = "proto3";
+
+package orcher.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "types.proto";
+
+// QueryService is the API for listing, searching and inspecting workflow
+// executions and their history.
+service QueryService {
+  // ListWorkflows lists workflow executions with optional filtering.
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+
+  // SearchWorkflows searches workflow executions using advanced filters.
+  rpc SearchWorkflows(SearchWorkflowsRequest) returns (SearchWorkflowsResponse);
+
+  // GetExecutionJournal retrieves the execution journal of a workflow: the
+  // event-sourced history entries (TaskScheduled, TaskCompleted, ...).
+  rpc GetExecutionJournal(GetExecutionJournalRequest) returns (GetExecutionJournalResponse);
+
+  // GetExecutionLogs retrieves the human-readable diagnostic log entries
+  // recorded for a workflow execution.
+  rpc GetExecutionLogs(GetExecutionLogsRequest) returns (GetExecutionLogsResponse);
+
+  // GetTaskExecutions retrieves the tasks of a workflow with their status,
+  // attempts and timing.
+  rpc GetTaskExecutions(GetTaskExecutionsRequest) returns (GetTaskExecutionsResponse);
+
+  // DescribeWorkflowExecution returns detailed information about one
+  // workflow execution.
+  rpc DescribeWorkflowExecution(DescribeWorkflowExecutionRequest) returns (DescribeWorkflowExecutionResponse);
+
+  // CountWorkflows counts workflow executions matching a query.
+  rpc CountWorkflows(CountWorkflowsRequest) returns (CountWorkflowsResponse);
+
+  // GetWorkflowExecutionStats returns statistics about workflow executions.
+  rpc GetWorkflowExecutionStats(GetWorkflowExecutionStatsRequest) returns (GetWorkflowExecutionStatsResponse);
+}
+
+// ListWorkflowsRequest lists workflow executions.
+message ListWorkflowsRequest {
+  // Namespace to query (defaults to "default").
+  string namespace = 1;
+
+  // Maximum number of results per page.
+  int32 page_size = 2;
+
+  // Pagination token from the previous response.
+  bytes next_page_token = 3;
+
+  // Optional: Filter by workflow type.
+  string workflow_type = 4;
+
+  // Optional: Filter by task queue.
+  string task_queue = 5;
+
+  // Optional: Filter by status.
+  repeated WorkflowExecutionStatus status_filter = 6;
+
+  // Optional: Only workflows started at or after this time.
+  google.protobuf.Timestamp start_time_begin = 7;
+
+  // Optional: Only workflows started before this time.
+  google.protobuf.Timestamp start_time_end = 8;
+
+  // Optional: Sort order.
+  ListWorkflowsSortOrder sort_order = 9;
+}
+
+// ListWorkflowsResponse contains the list of workflow executions.
+message ListWorkflowsResponse {
+  // Workflow execution summaries.
+  repeated WorkflowExecutionInfo executions = 1;
+
+  // Token for the next page; empty when there are no more results.
+  bytes next_page_token = 2;
+}
+
+// SearchWorkflowsRequest searches workflows using advanced query syntax.
+message SearchWorkflowsRequest {
+  // Namespace to search.
+  string namespace = 1;
+
+  // Maximum number of results per page.
+  int32 page_size = 2;
+
+  // Pagination token.
+  bytes next_page_token = 3;
+
+  // Query in an SQL-like syntax. Examples:
+  //   "WorkflowType = 'OrderProcessing' AND Status = 'Running'"
+  //   "CustomerId = '12345' AND OrderDate > '2024-01-01'"
+  string query = 4;
+
+  // Optional: Sort fields.
+  repeated SearchWorkflowsSortField sort_fields = 5;
+}
+
+// SearchWorkflowsResponse contains search results.
+message SearchWorkflowsResponse {
+  // Matching workflow executions.
+  repeated WorkflowExecutionInfo executions = 1;
+
+  // Pagination token.
+  bytes next_page_token = 2;
+}
+
+// GetExecutionJournalRequest retrieves a workflow's execution journal.
+message GetExecutionJournalRequest {
+  // Namespace.
+  string namespace = 1;
+
+  // Workflow ID.
+  string workflow_id = 2;
+
+  // Optional: Specific execution ID. If omitted, the current execution is used.
+  string execution_id = 3;
+
+  // Maximum number of entries per page.
+  int32 page_size = 4;
+
+  // Pagination token.
+  bytes next_page_token = 5;
+
+  // Long-poll: wait for new entries instead of returning at once.
+  bool wait_for_new_entries = 6;
+
+  // Optional: Only return entries after this entry ID.
+  int64 after_entry_id = 7;
+
+  // Optional: Search only active storage, not the archive.
+  bool skip_archival = 8;
+}
+
+// GetExecutionJournalResponse contains execution journal entries.
+message GetExecutionJournalResponse {
+  // Execution journal entries.
+  repeated JournalEntry journal = 1;
+
+  // Pagination token.
+  bytes next_page_token = 2;
+
+  // Whether the workflow is archived.
+  bool archived = 3;
+}
+
+// GetExecutionLogsRequest retrieves the diagnostic log of a workflow execution.
+message GetExecutionLogsRequest {
+  // Namespace.
+  string namespace = 1;
+
+  // Workflow ID.
+  string workflow_id = 2;
+
+  // Optional: Specific execution ID. If omitted, the current execution is used.
+  string execution_id = 3;
+
+  // Maximum number of entries per page.
+  int32 page_size = 4;
+
+  // Pagination token.
+  bytes next_page_token = 5;
+
+  // Optional: Filter by log level (trace, debug, info, warn, error, fatal).
+  string level = 6;
+
+  // Optional: Filter by step or task name.
+  string step = 7;
+
+  // Optional: Only return entries after this log ID, for following a log as
+  // it grows.
+  int64 after_id = 8;
+
+  // Optional: Only entries from this time on.
+  google.protobuf.Timestamp since = 9;
+
+  // Optional: Only entries up to this time.
+  google.protobuf.Timestamp until = 10;
+}
+
+// GetExecutionLogsResponse contains text log entries.
+message GetExecutionLogsResponse {
+  // Log entries.
+  repeated ExecutionLogEntry logs = 1;
+
+  // Pagination token.
+  bytes next_page_token = 2;
+
+  // Total count of matching logs.
+  int64 total_count = 3;
+}
+
+// ExecutionLogEntry is one human-readable log entry.
+message ExecutionLogEntry {
+  // Log entry ID, used with after_id to page through or follow the log.
+  int64 id = 1;
+
+  // Execution ID.
+  string execution_id = 2;
+
+  // Timestamp.
+  google.protobuf.Timestamp timestamp = 3;
+
+  // Log level (trace, debug, info, warn, error, fatal).
+  string level = 4;
+
+  // Log message.
+  string message = 5;
+
+  // Optional: Step or task name.
+  string step = 6;
+
+  // Optional: Task ID.
+  string task_id = 7;
+
+  // Optional: Worker ID.
+  string worker_id = 8;
+
+  // Optional: Source component.
+  string source = 9;
+
+  // Optional: Additional metadata as JSON.
+  string metadata = 10;
+}
+
+// GetTaskExecutionsRequest retrieves task execution details.
+message GetTaskExecutionsRequest {
+  // Namespace.
+  string namespace = 1;
+
+  // Workflow ID.
+  string workflow_id = 2;
+
+  // Optional: Specific execution ID.
+  string execution_id = 3;
+
+  // Maximum number of entries per page.
+  int32 page_size = 4;
+
+  // Pagination token.
+  bytes next_page_token = 5;
+
+  // Optional: Filter by task status.
+  string status = 6;
+
+  // Optional: Filter by task type.
+  string task_type = 7;
+}
+
+// GetTaskExecutionsResponse contains task execution details.
+message GetTaskExecutionsResponse {
+  // Task executions.
+  repeated TaskExecutionInfo tasks = 1;
+
+  // Pagination token.
+  bytes next_page_token = 2;
+
+  // Total count.
+  int64 total_count = 3;
+}
+
+// TaskExecutionInfo contains details about a task execution.
+message TaskExecutionInfo {
+  // Task execution ID.
+  string id = 1;
+
+  // Task ID (logical task identifier).
+  string task_id = 2;
+
+  // Task type.
+  string task_type = 3;
+
+  // Workflow ID.
+  string workflow_id = 4;
+
+  // Execution ID.
+  string execution_id = 5;
+
+  // Task queue.
+  string task_queue = 6;
+
+  // Status (scheduled, started, completed, failed, timed_out).
+  string status = 7;
+
+  // Attempt number, counting retries.
+  int32 attempt = 8;
+
+  // Identity of the service that claimed this task.
+  string service_identity = 9;
+
+  // When the task was scheduled.
+  google.protobuf.Timestamp scheduled_at = 10;
+
+  // When the task started executing.
+  google.protobuf.Timestamp started_at = 11;
+
+  // When the task completed.
+  google.protobuf.Timestamp completed_at = 12;
+
+  // Error message (if failed).
+  string error_message = 13;
+
+  // Error type (if failed).
+  string error_type = 14;
+
+  // Heartbeat details (JSON).
+  string heartbeat_details = 15;
+}
+
+// DescribeWorkflowExecutionRequest asks for the details of one workflow execution.
+message DescribeWorkflowExecutionRequest {
+  // Namespace.
+  string namespace = 1;
+
+  // Workflow ID.
+  string workflow_id = 2;
+
+  // Optional: Specific execution ID.
+  string execution_id = 3;
+}
+
+// DescribeWorkflowExecutionResponse contains detailed workflow information.
+message DescribeWorkflowExecutionResponse {
+  // Workflow execution info.
+  WorkflowExecutionInfo execution_info = 1;
+
+  // Number of pending tasks.
+  int32 pending_tasks = 2;
+
+  // Number of pending timers.
+  int32 pending_timers = 3;
+
+  // Number of pending events.
+  int32 pending_events = 4;
+
+  // Execution configuration.
+  WorkflowExecutionConfiguration execution_config = 5;
+}
+
+// CountWorkflowsRequest counts matching workflows.
+message CountWorkflowsRequest {
+  // Namespace.
+  string namespace = 1;
+
+  // Query string (same syntax as SearchWorkflows).
+  string query = 2;
+}
+
+// CountWorkflowsResponse contains the count.
+message CountWorkflowsResponse {
+  // Number of matching workflows.
+  int64 count = 1;
+}
+
+// GetWorkflowExecutionStatsRequest asks for workflow statistics.
+message GetWorkflowExecutionStatsRequest {
+  // Namespace.
+  string namespace = 1;
+
+  // Optional: Filter by workflow type.
+  string workflow_type = 2;
+
+  // Optional: Filter by task queue.
+  string task_queue = 3;
+
+  // Optional: Time range.
+  google.protobuf.Timestamp start_time_begin = 4;
+  google.protobuf.Timestamp start_time_end = 5;
+}
+
+// GetWorkflowExecutionStatsResponse contains statistics.
+message GetWorkflowExecutionStatsResponse {
+  // Total workflows.
+  int64 total_count = 1;
+
+  // Count by status.
+  map<string, int64> status_counts = 2;
+
+  // Average execution time.
+  google.protobuf.Duration average_execution_time = 3;
+
+  // Median execution time.
+  google.protobuf.Duration median_execution_time = 4;
+
+  // P95 execution time.
+  google.protobuf.Duration p95_execution_time = 5;
+
+  // P99 execution time.
+  google.protobuf.Duration p99_execution_time = 6;
+}
+
+// WorkflowExecutionInfo contains summary information about a workflow execution.
+message WorkflowExecutionInfo {
+  // Workflow execution identifiers.
+  string workflow_id = 1;
+  string execution_id = 2;
+
+  // Workflow type.
+  string workflow_type = 3;
+
+  // Task queue.
+  string task_queue = 4;
+
+  // Namespace.
+  string namespace = 5;
+
+  // Current status.
+  WorkflowExecutionStatus status = 6;
+
+  // Start time.
+  google.protobuf.Timestamp start_time = 7;
+
+  // Close time, if the workflow has finished.
+  google.protobuf.Timestamp close_time = 8;
+
+  // Time from start to close.
+  google.protobuf.Duration execution_time = 9;
+
+  // Number of journal entries.
+  int64 journal_length = 10;
+
+  // The parent workflow, if this is a child workflow.
+  ParentExecutionInfo parent_execution = 11;
+
+  // Labels: indexed key-value metadata.
+  map<string, string> labels = 12;
+
+  // Annotations: non-indexed key-value metadata.
+  map<string, string> annotations = 13;
+
+  // Tags, for categorization.
+  repeated string tags = 14;
+
+  // Identity of whoever started the workflow.
+  string started_by = 15;
+
+  // Current attempt number, counting retries.
+  int32 attempt = 16;
+
+  // Cron schedule, if the workflow is periodic.
+  string cron_schedule = 17;
+
+  // Number of state transitions.
+  int64 state_transition_count = 18;
+}
+
+// ParentExecutionInfo identifies the parent of a child workflow.
+message ParentExecutionInfo {
+  // Namespace.
+  string namespace = 1;
+
+  // Parent workflow ID.
+  string workflow_id = 2;
+
+  // Parent execution ID.
+  string execution_id = 3;
+}
+
+// WorkflowExecutionConfiguration contains workflow execution settings.
+message WorkflowExecutionConfiguration {
+  // Task queue.
+  string task_queue = 1;
+
+  // Execution timeout.
+  google.protobuf.Duration execution_timeout = 2;
+
+  // Run timeout.
+  google.protobuf.Duration run_timeout = 3;
+
+  // Default task timeout.
+  google.protobuf.Duration default_task_timeout = 4;
+
+  // Retry policy.
+  RetryPolicy retry_policy = 5;
+
+  // Cron schedule.
+  string cron_schedule = 6;
+}
+
+// ListWorkflowsSortOrder is the sort order of ListWorkflows results.
+enum ListWorkflowsSortOrder {
+  LIST_WORKFLOWS_SORT_ORDER_UNSPECIFIED = 0;
+  LIST_WORKFLOWS_SORT_ORDER_START_TIME_ASC = 1;
+  LIST_WORKFLOWS_SORT_ORDER_START_TIME_DESC = 2;
+  LIST_WORKFLOWS_SORT_ORDER_CLOSE_TIME_ASC = 3;
+  LIST_WORKFLOWS_SORT_ORDER_CLOSE_TIME_DESC = 4;
+}
+
+// SearchWorkflowsSortField is one field SearchWorkflows results are sorted by.
+message SearchWorkflowsSortField {
+  // Field name (e.g., "StartTime", "CloseTime", "ExecutionTime").
+  string field = 1;
+
+  // Sort order.
+  SearchWorkflowsSortOrder order = 2;
+}
+
+// SearchWorkflowsSortOrder is a sort direction.
+enum SearchWorkflowsSortOrder {
+  SEARCH_WORKFLOWS_SORT_ORDER_UNSPECIFIED = 0;
+  SEARCH_WORKFLOWS_SORT_ORDER_ASC = 1;
+  SEARCH_WORKFLOWS_SORT_ORDER_DESC = 2;
+}
