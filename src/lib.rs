@@ -27,6 +27,9 @@ pub use tonic;
 
 /// ORCHER protocol definitions, generated from the `.proto` files.
 pub mod orcher {
+    // Generated code is not ours to restyle, and new clippy releases add lints
+    // it trips (for example `result_large_err` on every gRPC method).
+    #[allow(clippy::all)]
     pub mod v1 {
         tonic::include_proto!("orcher.v1");
     }
