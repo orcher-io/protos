@@ -6,6 +6,7 @@ license = "Apache-2.0"
 authors = ["ORCHER Contributors"]
 description = "Protocol definitions for ORCHER orchestration platform"
 repository = "https://github.com/orcher-io/protos"
+readme = "README.md"
 keywords = ["orchestration", "workflow", "grpc", "protobuf"]
 categories = ["asynchronous", "network-programming"]
 

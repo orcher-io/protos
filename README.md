@@ -1,31 +1,35 @@
-# orcher-proto
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./assets/banner.svg">
+    <source media="(prefers-color-scheme: light)" srcset="./assets/banner-light.svg">
+    <img alt="ORCHER Protocol" src="./assets/banner.svg" width="100%">
+  </picture>
+</p>
 
-Protocol Buffer definitions for the [ORCHER](https://github.com/orcher-io)
-workflow orchestration platform, and the Rust crate generated from them.
+<p align="center"><sub>The ORCHER API, defined once in Protocol Buffers and shared by the engine and every SDK.</sub></p>
 
-These `.proto` files are the source of truth for the ORCHER gRPC API. The
-ORCHER engine and every SDK are built from them.
+<br />
 
-## Status
+<div>
+  <a href="https://crates.io/crates/orcher-proto"><img src="https://img.shields.io/crates/v/orcher-proto?style=flat-square&labelColor=0a0a0a&color=04B385&logo=rust&logoColor=white" alt="crates.io"></a>
+  <a href="https://docs.rs/orcher-proto"><img src="https://img.shields.io/docsrs/orcher-proto?style=flat-square&labelColor=0a0a0a&color=38BDF0&logo=docsdotrs&logoColor=white" alt="docs.rs"></a>
+  <a href="https://github.com/orcher-io/protos/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/orcher-io/protos/ci.yml?branch=main&style=flat-square&labelColor=0a0a0a&color=04B385&logo=github&logoColor=white&label=CI" alt="CI"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-38BDF0?style=flat-square&labelColor=0a0a0a" alt="Apache 2.0"></a>
+</div>
 
-Pre-1.0. The API is still evolving and may change in incompatible ways
-between minor versions. Field numbers of released messages are not reused.
+<br />
 
-## Proto files
+The `.proto` files are the source of truth for the ORCHER gRPC API, and `orcher-proto` is the Rust crate generated from them.
 
-All files are in the `orcher.v1` package, under `proto/`.
+- <img height="14" src="https://octicons-col.vercel.app/file-code/38BDF0"> **One package**: every service and message lives in `orcher.v1`, under `proto/`
+- <img height="14" src="https://octicons-col.vercel.app/package/38BDF0"> **Rust bindings**: tonic clients and servers, re-exported at the crate root
+- <img height="14" src="https://octicons-col.vercel.app/tools/38BDF0"> **No `protoc` needed**: the crate compiles the files with a protobuf compiler written in Rust
+- <img height="14" src="https://octicons-col.vercel.app/code/38BDF0"> **Any language**: generate clients for Go, TypeScript, Python and more from the same files
+- <img height="14" src="https://octicons-col.vercel.app/shield-check/38BDF0"> **Compatible by rule**: CI rejects any wire- or JSON-breaking change, and field numbers are never reused
 
-| File | Contents |
-|------|----------|
-| `types.proto` | Shared types: payloads, retry policy, failures, statuses, journal entries and commands |
-| `workflow_service.proto` | `WorkflowService`: start, query, update, cancel and reset workflows, and send them events |
-| `execution_service.proto` | `ExecutionService`: poll for and report workflow and task work |
-| `query_service.proto` | `QueryService`: list, search and inspect workflow executions |
-| `actor_service.proto` | `ActorService`: stateful actors addressed by type and key |
-| `worker_service.proto` | `WorkerService`: worker registration and heartbeats |
-| `namespace_service.proto` | `NamespaceService`: namespace management |
+<br />
 
-## Rust
+### <img height="16" src="https://octicons-col.vercel.app/download/38BDF0"> Install
 
 ```toml
 [dependencies]
@@ -33,10 +37,14 @@ orcher-proto = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-The code is generated at build time by a protobuf compiler written in Rust,
-so no `protoc` installation is needed.
+> [!NOTE]
+> These are raw bindings. To write workflows, use an SDK instead: [`orcher-sdk`](https://crates.io/crates/orcher-sdk) for Rust or [`@orcher/sdk`](https://www.npmjs.com/package/@orcher/sdk) for TypeScript. The API is pre-1.0 and may change between minor releases; every change is listed in [CHANGELOG.md](CHANGELOG.md).
 
-Everything in `orcher.v1` is re-exported at the crate root:
+<br />
+
+### <img height="16" src="https://octicons-col.vercel.app/play/38BDF0"> Use from Rust
+
+Everything in `orcher.v1` is re-exported at the crate root, along with the `tonic`, `prost` and `prost-types` versions the bindings were built with:
 
 ```rust
 use orcher_proto::workflow_service_client::WorkflowServiceClient;
@@ -49,10 +57,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let response = client
         .start_workflow(StartWorkflowRequest {
             workflow_id: "order-1001".into(),
-            workflow_type: "OrderProcessing".into(),
+            workflow_type: "confirm_order".into(),
             task_queue: "orders".into(),
             namespace: "default".into(),
-            input: br#"{"order_id":"1001"}"#.to_vec(),
+            input: br#"{"id":"order-1001"}"#.to_vec(),
             ..Default::default()
         })
         .await?;
@@ -62,12 +70,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Most applications should use an ORCHER SDK rather than these raw bindings.
+<br />
 
-## Other languages
+### <img height="16" src="https://octicons-col.vercel.app/terminal/38BDF0"> Other languages
 
-Generate code from the files in `proto/` with your language's protobuf
-toolchain, for example:
+Generate code from the files in `proto/` with your language's protobuf toolchain:
 
 ```bash
 # Go
@@ -80,10 +87,39 @@ npx protoc -Iproto --ts_out=src/generated proto/*.proto
 python -m grpc_tools.protoc -Iproto --python_out=. --grpc_python_out=. proto/*.proto
 ```
 
-## Contributing
+<br />
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+### <img height="16" src="https://octicons-col.vercel.app/file-directory/38BDF0"> Proto files
 
-## License
+| File | Contents |
+|------|----------|
+| `types.proto` | Shared types: payloads, retry policy, failures, statuses, journal entries and commands |
+| `workflow_service.proto` | `WorkflowService`: start, query, update, cancel and reset workflows, and send them events |
+| `execution_service.proto` | `ExecutionService`: poll for and report workflow and task work |
+| `query_service.proto` | `QueryService`: list, search and inspect workflow executions |
+| `actor_service.proto` | `ActorService`: stateful actors addressed by type and key |
+| `worker_service.proto` | `WorkerService`: worker registration and heartbeats |
+| `namespace_service.proto` | `NamespaceService`: namespace management |
+
+<br />
+
+### <img height="16" src="https://octicons-col.vercel.app/stack/38BDF0"> How it fits
+
+| Layer | Package | Repository |
+|-------|---------|------------|
+| API definitions | [`orcher-proto`](https://crates.io/crates/orcher-proto) | [orcher-io/protos](https://github.com/orcher-io/protos) |
+| SDK core | [`orcher-sdk-core`](https://crates.io/crates/orcher-sdk-core) | [orcher-io/sdk-core](https://github.com/orcher-io/sdk-core) |
+| Rust SDK | [`orcher-sdk`](https://crates.io/crates/orcher-sdk) | [orcher-io/sdk-rust](https://github.com/orcher-io/sdk-rust) |
+| TypeScript SDK | [`@orcher/sdk`](https://www.npmjs.com/package/@orcher/sdk) | [orcher-io/sdk-ts](https://github.com/orcher-io/sdk-ts) |
+
+The engine serves this API, `orcher-sdk-core` speaks it on behalf of every language SDK, and the SDKs give it an idiomatic face.
+
+<br />
+
+### <img height="16" src="https://octicons-col.vercel.app/heart/38BDF0"> Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and propose a change.
+
+### <img height="16" src="https://octicons-col.vercel.app/law/38BDF0"> License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
