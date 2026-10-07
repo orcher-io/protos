@@ -301,6 +301,11 @@ message CancelWorkflowRequest {
 
   // Optional: Request ID that makes the cancellation idempotent.
   string request_id = 5;
+
+  // Optional: How long the workflow may spend cleaning up after it observes
+  // the cancellation. Once it has passed, the workflow is terminated. Unset
+  // means no limit; terminating the workflow stops it at any time.
+  google.protobuf.Duration cleanup_timeout = 6;
 }
 
 // CancelWorkflowResponse confirms the cancellation request.
