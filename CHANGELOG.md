@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/orcher-io/protos/compare/v0.1.2...v0.1.3) (2026-10-08)
+
+
+### Features
+
+* report the worker protocol version on workflow completion and failure ([#8](https://github.com/orcher-io/protos/issues/8)) ([6064cb5](https://github.com/orcher-io/protos/commit/6064cb532074fb04af999f3d3c5ec72633cf9887))
+
 ## [0.1.2](https://github.com/orcher-io/protos/compare/v0.1.1...v0.1.2) (2026-10-08)
 
 
