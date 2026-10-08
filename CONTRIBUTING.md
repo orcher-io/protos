@@ -21,6 +21,14 @@ SDK, so changes must stay backward compatible:
   the `.proto` files are the API reference: say what a value means, what the
   server does with it, and what an empty or unset value means.
 
+## Versions
+
+Before 1.0, adding a field, message, enum value or RPC is a minor version
+(0.x.0), never a patch: Rust code generated from these files builds messages
+with struct literals, so a crate that accepts any patch of the previous minor
+stops compiling when a field appears. Title such a change `feat:` and the
+release tooling bumps the minor; a `fix:` bumps the patch.
+
 ## Checking your change
 
 You need a Rust toolchain; the build compiles the protos itself.

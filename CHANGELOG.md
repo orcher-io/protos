@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/orcher-io/protos/compare/v0.1.3...v0.2.0) (2026-10-08)
+
+
+### Bug Fixes
+
+* release added fields as a minor version, starting with 0.2.0 ([#10](https://github.com/orcher-io/protos/issues/10)) ([9e04b4f](https://github.com/orcher-io/protos/commit/9e04b4f0682e9b57f2af743c648a26c10ea8e5fe))
+
 ## [0.1.3](https://github.com/orcher-io/protos/compare/v0.1.2...v0.1.3) (2026-10-08)
 
 
