@@ -4,8 +4,9 @@ name: Release
 # pull request open with the next version and its changelog; merging it tags
 # the release, and the publish job below sends that version to crates.io.
 #
-# Before 1.0, features and fixes bump the patch and a breaking change bumps
-# the minor (see release-please-config.json).
+# Before 1.0, a feature (a new field, message, enum value or RPC) or a
+# breaking change bumps the minor and a fix bumps the patch (see
+# release-please-config.json and CONTRIBUTING.md).
 #
 # Publishing authenticates with crates.io trusted publishing (OIDC), so no
 # token is stored. A CARGO_REGISTRY_TOKEN secret is used instead when present,
