@@ -68,6 +68,12 @@ message WorkerCapabilities {
 
   // Maximum number of task executions at once.
   uint32 max_concurrent_tasks = 4;
+
+  // The worker protocol version this worker speaks, so the engine only sends
+  // it what it can handle. 0 (unset) is every worker from before this field.
+  //   1: handles a workflow cancellation request delivered in the journal,
+  //      letting the workflow clean up before it ends.
+  uint32 protocol_version = 5;
 }
 
 // RegisterWorkerResponse reports the result of the registration.
