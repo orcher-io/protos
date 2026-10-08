@@ -34,6 +34,51 @@ jobs:
       # Builds the crate exactly as crates.io would receive it.
       - run: cargo package
 
+  # Adding a field breaks Rust code that builds the message with a struct
+  # literal. This builds the newest orcher-sdk-core, published and on main,
+  # against this change whenever its version requirement would take this
+  # version, so a change that would break it fails here and not for its users.
+  sdk-core:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk-core: [published, main]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: protos
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Fetch orcher-sdk-core (${{ matrix.sdk-core }})
+        run: |
+          if [ "${{ matrix.sdk-core }}" = main ]; then
+            git clone --depth 1 https://github.com/orcher-io/sdk-core sdk-core
+          else
+            cargo new --lib --vcs none sdk-core
+            cargo add --manifest-path sdk-core/Cargo.toml orcher-sdk-core
+          fi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sdk-core
+          key: ${{ matrix.sdk-core }}
+      - name: Build it against this change
+        working-directory: sdk-core
+        shell: bash
+        run: |
+          protos="$GITHUB_WORKSPACE/protos"
+          rm -f Cargo.lock  # resolve afresh, so the patch is picked up
+          this=$(cargo metadata --no-deps --format-version 1 --manifest-path "$protos/Cargo.toml" | jq -r '.packages[0].version')
+          patch=(--config "patch.crates-io.orcher-proto.path=\"$protos\""
+                 --config "patch.'https://github.com/orcher-io/protos'.orcher-proto.path=\"$protos\"")
+          metadata=$(cargo metadata --format-version 1 "${patch[@]}")
+          core=$(jq -r '.packages[] | select(.name == "orcher-sdk-core") | "orcher-sdk-core \(.version) (orcher-proto \(.dependencies[] | select(.name == "orcher-proto") | .req))"' <<< "$metadata")
+          if ! jq -e '.packages[] | select(.name == "orcher-proto" and .source == null)' <<< "$metadata" > /dev/null; then
+            echo "::notice::$core does not take orcher-proto $this, so this change cannot break it."
+            exit 0
+          fi
+          echo "Building $core against orcher-proto $this from this change"
+          cargo build --all-targets "${patch[@]}"
+
   # A published field number or type can never change: clients built against
   # an older release must keep working. buf compares the pull request with its
   # base branch and fails on any wire- or JSON-incompatible change.
