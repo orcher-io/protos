@@ -205,6 +205,13 @@ message CompleteWorkflowExecutionRequest {
   // them; see TaskCapabilities. They are served as a poll declaring the same
   // would be. Unset means nothing beyond the baseline.
   TaskCapabilities eager_task_capabilities = 12;
+
+  // The worker protocol version of the worker completing this step, numbered
+  // as in WorkerCapabilities.protocol_version. 0 (unset) is every worker from
+  // before this field. When the step carried a cancellation request and the
+  // worker is below version 1, it did not hand the request to the workflow:
+  // the engine then ignores the commands and ends the run as cancelled.
+  uint32 protocol_version = 13;
 }
 
 // CompleteWorkflowExecutionResponse acknowledges completion and may hand back
@@ -238,6 +245,10 @@ message FailWorkflowExecutionRequest {
 
   // Binary checksum.
   bytes binary_checksum = 7;
+
+  // The worker protocol version, as in
+  // CompleteWorkflowExecutionRequest.protocol_version.
+  uint32 protocol_version = 8;
 }
 
 // FailWorkflowExecutionResponse acknowledges failure.
