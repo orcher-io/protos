@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/orcher-io/protos/compare/v0.2.0...v0.3.0) (2026-10-11)
+
+
+### Features
+
+* add the kernel protocol messages (orcher.kernel.v1) ([#15](https://github.com/orcher-io/protos/issues/15)) ([e789fa0](https://github.com/orcher-io/protos/commit/e789fa0adf8e5354d0842055165a4e691e0f3a2d)), closes [#14](https://github.com/orcher-io/protos/issues/14)
+
 ## [0.2.0](https://github.com/orcher-io/protos/compare/v0.1.3...v0.2.0) (2026-10-08)
 
 
