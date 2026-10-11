@@ -100,6 +100,7 @@ python -m grpc_tools.protoc -Iproto --python_out=. --grpc_python_out=. proto/*.p
 | `actor_service.proto` | `ActorService`: stateful actors addressed by type and key |
 | `worker_service.proto` | `WorkerService`: worker registration and heartbeats |
 | `namespace_service.proto` | `NamespaceService`: namespace management |
+| `kernel.proto` | The kernel protocol (`orcher.kernel.v1`): the exchange between the kernel (sdk-core) and a language SDK, not part of the gRPC API |
 
 <br />
 
