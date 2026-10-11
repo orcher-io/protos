@@ -13,6 +13,9 @@
 //! - **WorkerService**: worker registration, heartbeats and deregistration
 //! - **NamespaceService**: namespace management
 //!
+//! The kernel protocol, the exchange between the kernel (sdk-core) and a
+//! language SDK, is in [`kernel::v1`].
+//!
 //! ## Terminology
 //!
 //! - **Service**: an execution runtime that polls for and runs work
@@ -33,9 +36,23 @@ pub mod orcher {
     pub mod v1 {
         tonic::include_proto!("orcher.v1");
     }
+
+    /// The kernel protocol (`orcher.kernel.v1`): the exchange between the
+    /// kernel (sdk-core) and a language SDK, separate from the engine's API
+    /// above and sharing no types with it. Not re-exported at the crate root,
+    /// so its names never shadow the engine API's.
+    pub mod kernel {
+        #[allow(clippy::all)]
+        pub mod v1 {
+            tonic::include_proto!("orcher.kernel.v1");
+        }
+    }
 }
 
 pub use orcher::v1::*;
+
+/// The kernel protocol, as `orcher_proto::kernel::v1`.
+pub use orcher::kernel;
 
 /// Version of the protocol definitions in this crate.
 pub const PROTOCOL_VERSION: &str = env!("CARGO_PKG_VERSION");

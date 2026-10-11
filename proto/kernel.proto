@@ -1,0 +1,694 @@
+syntax = "proto3";
+
+// The kernel protocol: the exchange between the ORCHER kernel (sdk-core) and
+// a language SDK. It is separate from the engine's gRPC API (`orcher.v1`),
+// which the kernel speaks to the engine, and shares no types with it.
+//
+// The kernel resolves a run's durable history into ordered, timed outcomes;
+// the SDK runs the user's workflow code against them and returns the commands
+// that code issued; the kernel checks those commands against history before
+// anything reaches the engine. One round trip per activation, and the kernel
+// never calls back into the SDK while resolving, so the same messages can be
+// carried in-process, to a sidecar, to a WASM component, or from the engine.
+//
+// The SDK never sees the journal. Design: sdk-core docs/kernel-protocol-v1.md.
+//
+// Version 1 is replay-based: on every activation the SDK runs the workflow
+// handler from the start, answering each durable call from the resolutions,
+// and a call with no resolution suspends the handler.
+package orcher.kernel.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// ============================================================================
+// Handshake
+// ============================================================================
+
+// WorkerHello is the first message from the SDK: what it implements.
+message WorkerHello {
+  // Every semantic protocol version the SDK implements. The kernel uses the
+  // highest one it also implements and reports it to the engine as the
+  // worker's protocol version (0 = baseline, 1 = handles a cancel request,
+  // 2 = activations resolved by the kernel).
+  repeated uint32 protocol_versions = 1;
+
+  // The SDK's name, for example "orcher-sdk-ts".
+  string sdk_name = 2;
+
+  // The SDK's release version.
+  string sdk_version = 3;
+
+  // The language the SDK runs user code in, for example "typescript".
+  string language = 4;
+
+  // The step-id scheme this SDK used before protocol version 2. A run that
+  // recorded no scheme started before version 2 and is replayed with this
+  // one, so its step ids match what it recorded. Unset for an SDK with no
+  // runs from before version 2.
+  StepIdScheme legacy_step_ids = 5;
+
+  // Optional features the SDK supports.
+  Capabilities capabilities = 6;
+}
+
+// Capabilities are optional features. None of them changes what a workflow
+// does or how it replays; each can be turned off without changing outcomes.
+message Capabilities {
+  // Payloads and messages cross the boundary as bytes rather than JSON.
+  bool binary_payloads = 1;
+
+  // The SDK sends Pressure reports about its language runtime.
+  bool reports_pressure = 2;
+}
+
+// HelloAccepted is the kernel's answer to WorkerHello.
+message HelloAccepted {
+  // The semantic protocol version both sides use.
+  uint32 protocol_version = 1;
+
+  // The capabilities both sides support, and so use.
+  Capabilities granted = 2;
+}
+
+// StepIdScheme is how step ids are derived from the order of durable calls.
+// Ids from different schemes differ, so a run is always replayed with the
+// scheme it started under.
+enum StepIdScheme {
+  STEP_ID_SCHEME_UNSPECIFIED = 0;
+
+  // The kernel's scheme, used by every run started on protocol version 2.
+  STEP_ID_SCHEME_KERNEL = 1;
+
+  // The Rust SDK's ids before protocol version 2. Frozen.
+  STEP_ID_SCHEME_RUST_V0 = 2;
+
+  // The Python SDK's ids before protocol version 2: its call counter starts
+  // at 1, and an event wait's id has no sequence number. Frozen.
+  STEP_ID_SCHEME_PYTHON_V0 = 3;
+
+  // The TypeScript SDK's ids before protocol version 2: a child workflow
+  // started without an id is named `child_{n}`. Frozen.
+  STEP_ID_SCHEME_TYPESCRIPT_V0 = 4;
+}
+
+// ============================================================================
+// Common types
+// ============================================================================
+
+// RunRef identifies the run an activation is for.
+message RunRef {
+  // The workflow id, shared by every run of the workflow.
+  string workflow_id = 1;
+
+  // This run's id.
+  string run_id = 2;
+
+  // The registered workflow type the SDK runs.
+  string workflow_type = 3;
+
+  // The task queue the run is on.
+  string task_queue = 4;
+
+  // The namespace the run is in.
+  string namespace = 5;
+}
+
+// Payload is a value as the SDK's data converter encoded it.
+message Payload {
+  // The encoded bytes.
+  bytes data = 1;
+
+  // How `data` is encoded, for example "encoding" = "json".
+  map<string, bytes> metadata = 2;
+}
+
+// Failure is why something did not produce a value. It has one shape for
+// tasks, children, user code and the run itself.
+message Failure {
+  // What went wrong, for a person.
+  string message = 1;
+
+  // The failure's type, as a retry policy names it (its `never_retry_types`
+  // are matched against this). Empty for a failure of no particular type.
+  string error_type = 2;
+
+  // The code that raised it says no retry can succeed.
+  bool non_retryable = 3;
+
+  // The failure's category, for programs.
+  FailureCode code = 4;
+
+  // Structured details the raiser attached, encoded as a Payload's data.
+  bytes details = 5;
+}
+
+// FailureCode is a failure's category. Values are only ever added.
+enum FailureCode {
+  // Not categorized.
+  FAILURE_CODE_UNSPECIFIED = 0;
+
+  // The user's code raised it.
+  FAILURE_CODE_APPLICATION = 1;
+
+  // A timeout expired.
+  FAILURE_CODE_TIMED_OUT = 2;
+
+  // It was cancelled.
+  FAILURE_CODE_CANCELLED = 3;
+
+  // It was terminated, without cleanup.
+  FAILURE_CODE_TERMINATED = 4;
+
+  // The workflow's code no longer replays its history.
+  FAILURE_CODE_NON_DETERMINISM = 5;
+
+  // A payload was over the engine's size limit.
+  FAILURE_CODE_PAYLOAD_TOO_LARGE = 6;
+
+  // A command was malformed or not allowed.
+  FAILURE_CODE_INVALID_COMMAND = 7;
+}
+
+// RetryPolicy is how a failed task or child run is retried. Unset fields take
+// the kernel's defaults, which are the same for every SDK.
+message RetryPolicy {
+  // Delay before the first retry.
+  google.protobuf.Duration first_delay = 1;
+
+  // Factor the delay is multiplied by after each retry.
+  double delay_multiplier = 2;
+
+  // Upper bound on the delay between retries.
+  google.protobuf.Duration max_delay = 3;
+
+  // Maximum number of attempts, the first included. 0 takes the default.
+  uint32 max_attempts = 4;
+
+  // Failure types (`Failure.error_type`) that are never retried.
+  repeated string never_retry_types = 5;
+}
+
+// ============================================================================
+// Activation: kernel → SDK
+// ============================================================================
+
+// RunActivation asks the SDK to run a workflow's code once.
+//
+// The SDK starts the handler from the start (protocol version 1 is
+// replay-based) and answers each durable call from `resolutions`, in order.
+// A call with no resolution records a command and suspends the handler.
+message RunActivation {
+  // Identifies this activation. Opaque; echoed back in RunActivationResult.
+  // A result for an activation the kernel no longer holds is dropped.
+  bytes activation_id = 1;
+
+  // The run.
+  RunRef run = 2;
+
+  // Every outcome the run has, in the order it must observe them. Always the
+  // complete list: the SDK keeps nothing between activations.
+  repeated Resolution resolutions = 3;
+
+  // Queries to answer after the handler has run on `resolutions`.
+  repeated QueryAsked queries = 4;
+}
+
+// Resolution is one outcome the run observes, at one point in its history.
+message Resolution {
+  // The step the outcome belongs to, as the kernel assigned it. Empty for
+  // outcomes that belong to no step (the run starting, an event arriving).
+  string step_id = 1;
+
+  // The run's logical time when this happened. The SDK's deterministic
+  // `now()` is the `at` of the last resolution its code has consumed.
+  google.protobuf.Timestamp at = 2;
+
+  // The run already observed this outcome in an earlier activation.
+  // Diagnostic only (for example, to log each outcome once): replay safety
+  // comes from durable calls resolving from history, and the SDK must not
+  // offer this to user code as a way to decide whether to perform an effect.
+  bool replaying = 3;
+
+  // What happened.
+  oneof what {
+    RunStarted started = 10;
+    StepSettled step = 11;
+    ChildSettled child = 12;
+    TimerElapsed timer = 13;
+    EventArrived event = 14;
+    UpdateArrived update = 15;
+    CancelAsked cancel = 16;
+  }
+}
+
+// RunStarted starts the run: always the first resolution.
+message RunStarted {
+  // The workflow's arguments, in parameter order.
+  repeated Payload input = 1;
+
+  // Which attempt of the run this is, from 1.
+  uint32 attempt = 2;
+
+  // When the run started.
+  google.protobuf.Timestamp started_at = 3;
+
+  // The seed for the run's deterministic random source. Every SDK derives the
+  // same values from it with the generator the kernel specifies. Empty for a
+  // run replayed with a legacy step-id scheme, which keeps its SDK's own
+  // generator.
+  bytes random_seed = 4;
+
+  // The parent run, for a child workflow.
+  RunRef parent = 5;
+
+  // Headers the run was started with.
+  map<string, Payload> headers = 6;
+
+  // The step-id scheme the kernel uses for this run.
+  StepIdScheme step_ids = 7;
+}
+
+// StepSettled is the outcome of a task, a recorded value, or a session step.
+message StepSettled {
+  Outcome outcome = 1;
+}
+
+// ChildSettled is the outcome of a child run.
+message ChildSettled {
+  // The child's workflow id.
+  string child_workflow_id = 1;
+
+  // The child run's id.
+  string child_run_id = 2;
+
+  Outcome outcome = 3;
+}
+
+// TimerElapsed says the step's timer fired.
+message TimerElapsed {}
+
+// EventArrived delivers an event sent to the run.
+message EventArrived {
+  // The event's id, unique within the run.
+  string event_id = 1;
+
+  // The event's name, as a wait names it.
+  string name = 2;
+
+  // What the sender sent.
+  Payload payload = 3;
+}
+
+// UpdateArrived delivers an update accepted into the run's history. It is
+// delivered at the same wait in every SDK.
+message UpdateArrived {
+  // The update's id, unique within the run.
+  string update_id = 1;
+
+  // The update handler's name.
+  string name = 2;
+
+  // The update's arguments, in parameter order.
+  repeated Payload args = 3;
+}
+
+// CancelAsked says the run was asked to cancel. The kernel places it at the
+// one wait it is delivered to: the first durable wait whose outcome history
+// did not record at or before `requested_at`. Later waits run normally, so
+// the run can clean up.
+message CancelAsked {
+  // Why, as the requester said.
+  string reason = 1;
+
+  // When the request was recorded.
+  google.protobuf.Timestamp requested_at = 2;
+}
+
+// Outcome is how a step or child ended. One decoding for every SDK.
+message Outcome {
+  oneof result {
+    // What it returned.
+    Payload value = 1;
+
+    // Why it returned nothing.
+    Failure failure = 2;
+  }
+
+  // How it ended.
+  End end = 3;
+
+  // How many attempts it took, the last included.
+  uint32 attempts = 4;
+}
+
+// End is how a step or child ended.
+enum End {
+  END_UNSPECIFIED = 0;
+  END_COMPLETED = 1;
+  END_FAILED = 2;
+  END_CANCELLED = 3;
+  END_TERMINATED = 4;
+  END_TIMED_OUT = 5;
+}
+
+// QueryAsked is a query to answer from the run's state.
+message QueryAsked {
+  // Identifies the query; echoed in the answer.
+  string query_id = 1;
+
+  // The query handler's name.
+  string name = 2;
+
+  // The query's arguments, in parameter order.
+  repeated Payload args = 3;
+}
+
+// ============================================================================
+// Result: SDK → kernel
+// ============================================================================
+
+// RunActivationResult is what one activation produced.
+message RunActivationResult {
+  // The activation this answers.
+  bytes activation_id = 1;
+
+  oneof outcome {
+    // The run's code ran: every durable call it made, in issue order.
+    Commands commands = 2;
+
+    // The run's code failed. The kernel reports it as the run's failure.
+    Failure workflow_failed = 3;
+
+    // The SDK could not process the activation (an unknown resolution, a
+    // decoding error, an unsupported version). The kernel does not fail the
+    // run for this: it hands the run back so another worker can take it, and
+    // reports the error.
+    ProtocolError protocol_error = 4;
+  }
+
+  // Answers to the activation's queries.
+  repeated QueryAnswer queries = 5;
+
+  // Answers to the updates the run handled.
+  repeated UpdateAnswer updates = 6;
+}
+
+// Commands are every durable call the run's code made in an activation.
+message Commands {
+  // In the order the code issued them, including calls answered from history.
+  // The kernel compares them with history (compared on identity, never on
+  // payloads) and sends only the new ones on, or reports a
+  // DeterminismViolation and sends nothing.
+  repeated Command commands = 1;
+}
+
+// Command is one durable call.
+message Command {
+  // The call's position: the order the run's code issued it, from 0. The
+  // kernel assigns the step id from it.
+  uint64 seq = 1;
+
+  // The call was answered from history. A satisfied command carries no
+  // payload fields (inputs, results, headers): payloads are never compared,
+  // so the SDK need not encode them for a call answered from history.
+  bool satisfied = 2;
+
+  oneof what {
+    RunTask run_task = 10;
+    StartTimer start_timer = 11;
+    CancelTimer cancel_timer = 12;
+    StartChild start_child = 13;
+    CancelChild cancel_child = 14;
+    SendEvent send_event = 15;
+    RecordValue record_value = 16;
+    AwaitEvent await_event = 17;
+    CompleteRun complete_run = 18;
+    FailRun fail_run = 19;
+    EndCancelled end_cancelled = 20;
+    RestartFresh restart_fresh = 21;
+    UpsertLabels upsert_labels = 22;
+  }
+}
+
+// RunTask runs a task. Compared on its type.
+message RunTask {
+  // The registered task type.
+  string task_type = 1;
+
+  // The queue to run it on. Empty: the run's own queue.
+  string task_queue = 2;
+
+  // The task's arguments, in parameter order.
+  repeated Payload input = 3;
+
+  // How long it may wait to be started.
+  google.protobuf.Duration queue_timeout = 4;
+
+  // How long one attempt may run.
+  google.protobuf.Duration attempt_timeout = 5;
+
+  // How long a running attempt may go without a heartbeat.
+  google.protobuf.Duration heartbeat_timeout = 6;
+
+  // How it is retried. Unset: the kernel's default.
+  RetryPolicy retry_policy = 7;
+
+  // Headers passed to the task.
+  map<string, Payload> headers = 8;
+
+  // Dispatch priority among queued tasks; higher first. Never reorders a
+  // run's own history.
+  uint32 priority = 9;
+
+  // Relative cost, an advisory hint for the worker's resource budget.
+  uint32 cost = 10;
+}
+
+// StartTimer starts a durable timer. Compared on its duration.
+message StartTimer {
+  // How long until it fires.
+  google.protobuf.Duration duration = 1;
+}
+
+// CancelTimer cancels a timer the run started.
+message CancelTimer {
+  // The timer's step id.
+  string step_id = 1;
+}
+
+// StartChild starts a child run. Compared on its workflow id and type.
+message StartChild {
+  // The child's workflow id. Empty: the kernel derives one from the step.
+  string workflow_id = 1;
+
+  // The registered workflow type.
+  string workflow_type = 2;
+
+  // The queue to run it on. Empty: the parent's queue.
+  string task_queue = 3;
+
+  // The namespace to run it in. Empty: the parent's namespace.
+  string namespace = 4;
+
+  // The child's arguments, in parameter order.
+  repeated Payload input = 5;
+
+  // How long the child may run in total.
+  google.protobuf.Duration execution_timeout = 6;
+
+  // What happens to the child when the parent ends first.
+  OrphanPolicy orphan_policy = 7;
+
+  // How the child is retried. Unset: not retried.
+  RetryPolicy retry_policy = 8;
+
+  // Headers the child starts with.
+  map<string, Payload> headers = 9;
+
+  // Dispatch priority; higher first.
+  uint32 priority = 10;
+}
+
+// OrphanPolicy is what happens to a child run when its parent ends first.
+enum OrphanPolicy {
+  // The kernel's default.
+  ORPHAN_POLICY_UNSPECIFIED = 0;
+
+  // End the child at once, without cleanup.
+  ORPHAN_POLICY_TERMINATE = 1;
+
+  // Ask the child to cancel, letting it clean up.
+  ORPHAN_POLICY_CANCEL = 2;
+
+  // Leave the child running.
+  ORPHAN_POLICY_ABANDON = 3;
+}
+
+// CancelChild asks a child run to cancel.
+message CancelChild {
+  // The child's step id.
+  string step_id = 1;
+}
+
+// SendEvent sends an event to another run. Compared on its target and name.
+message SendEvent {
+  // The target's workflow id.
+  string workflow_id = 1;
+
+  // The target run. Empty: its current run.
+  string run_id = 2;
+
+  // The event's name.
+  string name = 3;
+
+  // What to send.
+  Payload payload = 4;
+
+  // Headers sent with the event.
+  map<string, Payload> headers = 5;
+}
+
+// RecordValue records a value the run computed (a closure, a side effect),
+// so a replay reuses it rather than computing it again.
+message RecordValue {
+  // The value, or why there is none.
+  Outcome outcome = 1;
+}
+
+// AwaitEvent waits for an event. Compared on its name and timeout.
+message AwaitEvent {
+  // The event's name.
+  string name = 1;
+
+  // How long to wait. Unset: no limit.
+  google.protobuf.Duration timeout = 2;
+}
+
+// CompleteRun ends the run with a result. Must be the last command.
+message CompleteRun {
+  Payload result = 1;
+}
+
+// FailRun ends the run with a failure. Must be the last command.
+message FailRun {
+  Failure failure = 1;
+}
+
+// EndCancelled ends the run as cancelled, after it observed a cancel request
+// and finished its cleanup. Must be the last command.
+message EndCancelled {
+  // What the run says about the cancellation.
+  string details = 1;
+}
+
+// RestartFresh ends this run and starts the workflow again as a new run with
+// a fresh history. Must be the last command.
+message RestartFresh {
+  // The workflow type to start. Empty: this run's type.
+  string workflow_type = 1;
+
+  // The queue to start it on. Empty: this run's queue.
+  string task_queue = 2;
+
+  // The new run's arguments, in parameter order.
+  repeated Payload input = 3;
+}
+
+// UpsertLabels sets labels on the run for search. Compared on its kind only.
+message UpsertLabels {
+  map<string, string> labels = 1;
+}
+
+// QueryAnswer answers a QueryAsked.
+message QueryAnswer {
+  // The query answered.
+  string query_id = 1;
+
+  oneof answer {
+    // The handler's result.
+    Payload value = 2;
+
+    // Why there is none.
+    Failure failure = 3;
+  }
+}
+
+// UpdateAnswer is the outcome of an update the run handled.
+message UpdateAnswer {
+  // The update answered.
+  string update_id = 1;
+
+  oneof answer {
+    // The handler's result.
+    Payload value = 2;
+
+    // The run refused the update before applying it.
+    Failure rejected = 3;
+
+    // The handler failed while applying it.
+    Failure failed = 4;
+  }
+}
+
+// ProtocolError is the SDK being unable to process an activation.
+message ProtocolError {
+  // What went wrong, for a person.
+  string message = 1;
+
+  ProtocolErrorKind kind = 2;
+}
+
+// ProtocolErrorKind is why the SDK could not process an activation.
+enum ProtocolErrorKind {
+  PROTOCOL_ERROR_KIND_UNSPECIFIED = 0;
+
+  // A resolution kind the SDK does not know.
+  PROTOCOL_ERROR_KIND_UNKNOWN_RESOLUTION = 1;
+
+  // A message or payload the SDK could not decode.
+  PROTOCOL_ERROR_KIND_UNDECODABLE = 2;
+
+  // A protocol version the SDK does not implement.
+  PROTOCOL_ERROR_KIND_UNSUPPORTED_VERSION = 3;
+}
+
+// ============================================================================
+// Reports
+// ============================================================================
+
+// DeterminismViolation is the run's code disagreeing with its history. The
+// kernel sends nothing for the activation and holds the run open, trying
+// again later: the fix is deploying code that replays the history, and
+// incompatible changes ship as a new workflow release.
+message DeterminismViolation {
+  // The run.
+  RunRef run = 1;
+
+  // The position of the first command that disagrees.
+  uint64 seq = 2;
+
+  // The step at that position in history.
+  string step_id = 3;
+
+  // The compared field that differs, for example "task_type" or "duration".
+  string field = 4;
+
+  // The value history recorded.
+  string expected = 5;
+
+  // The value the code issued.
+  string actual = 6;
+}
+
+// Pressure is the SDK's report of how loaded its language runtime is. It is
+// advisory: the kernel's resource budget uses it to decide whether to take
+// more work, and still enforces its hard limits.
+message Pressure {
+  // How late the runtime's scheduler runs callbacks (for example, the
+  // JavaScript event-loop delay), in milliseconds.
+  uint32 loop_delay_ms = 1;
+
+  // Work waiting for the runtime to pick it up.
+  uint32 queue_depth = 2;
+}
