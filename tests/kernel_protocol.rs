@@ -77,3 +77,39 @@ fn the_engine_api_is_unchanged_at_the_root() {
     let _engine_retry = orcher_proto::RetryPolicy::default();
     let _kernel_retry = kernel::RetryPolicy::default();
 }
+
+/// The host protocol's messages round-trip and reuse the kernel's types.
+#[test]
+fn a_task_assignment_and_its_outcome_round_trip() {
+    use orcher_proto::host::v1 as host;
+    let assignment = host::TaskAssignment {
+        token: b"task-token".to_vec(),
+        task_id: "task-0".into(),
+        task_type: "charge".into(),
+        run: Some(kernel::RunRef {
+            workflow_id: "order-7".into(),
+            run_id: "run-1".into(),
+            ..Default::default()
+        }),
+        input: vec![kernel::Payload {
+            data: br#"{"amount":7}"#.to_vec(),
+            metadata: Default::default(),
+        }],
+        attempt: 1,
+        ..Default::default()
+    };
+    let decoded = host::TaskAssignment::decode(assignment.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded, assignment);
+
+    let outcome = host::TaskOutcome {
+        token: b"task-token".to_vec(),
+        result: Some(host::task_outcome::Result::Failure(kernel::Failure {
+            message: "card declined".into(),
+            error_type: "Declined".into(),
+            non_retryable: true,
+            ..Default::default()
+        })),
+    };
+    let decoded = host::TaskOutcome::decode(outcome.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded, outcome);
+}

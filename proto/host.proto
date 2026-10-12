@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+// The host protocol: the work a worker host (orcher-sdk-host, in the sdk-core
+// repository) hands a language SDK besides workflow activations, and what the
+// SDK hands back. Workflow activations are the kernel protocol's
+// (`orcher.kernel.v1`); tasks and actor operations, which the kernel protocol
+// leaves out, are here. Both cross the same way: as these messages' bytes
+// between a native module and its language, or over a socket to a sidecar.
+//
+// The language pulls: it asks the host for the next piece of work when it has
+// room to run one, and returns the result. The host never calls into the
+// language. Design: sdk-core docs/worker-host.md.
+package orcher.host.v1;
+
+import "google/protobuf/duration.proto";
+import "kernel.proto";
+
+// ============================================================================
+// Tasks
+// ============================================================================
+
+// TaskAssignment is a task for the language to run.
+message TaskAssignment {
+  // Identifies this attempt. Opaque; handed back with its heartbeats and its
+  // outcome.
+  bytes token = 1;
+
+  // The task's id within its workflow run.
+  string task_id = 2;
+
+  // The registered task type to run.
+  string task_type = 3;
+
+  // The workflow run that scheduled it.
+  orcher.kernel.v1.RunRef run = 4;
+
+  // The task's arguments, in parameter order.
+  repeated orcher.kernel.v1.Payload input = 5;
+
+  // Which attempt this is, from 1.
+  uint32 attempt = 6;
+
+  // How long this attempt may run. Unset: no limit beyond the engine's.
+  google.protobuf.Duration attempt_timeout = 7;
+
+  // How long a running attempt may go without a heartbeat. Unset: the task
+  // need not heartbeat; the host heartbeats for it while it runs.
+  google.protobuf.Duration heartbeat_timeout = 8;
+
+  // Headers the task was scheduled with.
+  map<string, orcher.kernel.v1.Payload> headers = 9;
+}
+
+// TaskHeartbeat is a running task saying it is alive, with progress details.
+message TaskHeartbeat {
+  // The attempt, as its assignment named it.
+  bytes token = 1;
+
+  // Progress details the task wants recorded. Unset: none.
+  orcher.kernel.v1.Payload details = 2;
+}
+
+// HeartbeatAnswer is what a heartbeat learned.
+message HeartbeatAnswer {
+  // The task has been asked to cancel: it should stop and report.
+  bool cancel_requested = 1;
+}
+
+// TaskOutcome is how a task attempt ended.
+message TaskOutcome {
+  // The attempt, as its assignment named it.
+  bytes token = 1;
+
+  oneof result {
+    // What it returned.
+    orcher.kernel.v1.Payload value = 2;
+
+    // Why it returned nothing. Its `error_type` and `non_retryable` decide
+    // whether the engine retries it.
+    orcher.kernel.v1.Failure failure = 3;
+  }
+}
+
+// ============================================================================
+// Actors
+// ============================================================================
+
+// ActorOperation is an operation on an actor for the language to run.
+message ActorOperation {
+  // Identifies this operation; handed back with its result.
+  string operation_id = 1;
+
+  // Identifies this delivery of the operation; handed back with its result.
+  string execution_id = 2;
+
+  // The registered actor type.
+  string actor_name = 3;
+
+  // The actor's key: which instance of the type.
+  string key = 4;
+
+  // The operation to run.
+  string operation = 5;
+
+  // The operation's argument.
+  orcher.kernel.v1.Payload payload = 6;
+
+  // Whether the operation may run alongside others on the same actor.
+  ActorMode mode = 7;
+
+  // Metadata the caller sent with the operation.
+  map<string, string> metadata = 8;
+}
+
+// ActorMode is how an operation shares an actor with others.
+enum ActorMode {
+  ACTOR_MODE_UNSPECIFIED = 0;
+
+  // Runs alone on the actor; may change its state.
+  ACTOR_MODE_EXCLUSIVE = 1;
+
+  // May run alongside other shared operations; reads state only.
+  ACTOR_MODE_SHARED = 2;
+}
+
+// ActorResult is how an actor operation ended.
+message ActorResult {
+  // The operation, as it was delivered.
+  string operation_id = 1;
+
+  // The delivery, as it was delivered.
+  string execution_id = 2;
+
+  oneof result {
+    // What it returned.
+    orcher.kernel.v1.Payload value = 3;
+
+    // Why it returned nothing.
+    orcher.kernel.v1.Failure failure = 4;
+  }
+}

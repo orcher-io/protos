@@ -14,7 +14,8 @@
 //! - **NamespaceService**: namespace management
 //!
 //! The kernel protocol, the exchange between the kernel (sdk-core) and a
-//! language SDK, is in [`kernel::v1`].
+//! language SDK, is in [`kernel::v1`]; the host protocol, for the tasks and
+//! actor operations a worker host hands an SDK, in [`host::v1`].
 //!
 //! ## Terminology
 //!
@@ -47,12 +48,25 @@ pub mod orcher {
             tonic::include_proto!("orcher.kernel.v1");
         }
     }
+
+    /// The host protocol (`orcher.host.v1`): the tasks and actor operations a
+    /// worker host hands a language SDK, beside the kernel protocol's
+    /// workflow activations. Not re-exported at the crate root.
+    pub mod host {
+        #[allow(clippy::all)]
+        pub mod v1 {
+            tonic::include_proto!("orcher.host.v1");
+        }
+    }
 }
 
 pub use orcher::v1::*;
 
 /// The kernel protocol, as `orcher_proto::kernel::v1`.
 pub use orcher::kernel;
+
+/// The host protocol, as `orcher_proto::host::v1`.
+pub use orcher::host;
 
 /// Version of the protocol definitions in this crate.
 pub const PROTOCOL_VERSION: &str = env!("CARGO_PKG_VERSION");
