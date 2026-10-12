@@ -10,6 +10,7 @@ const PROTOS: &[&str] = &[
     "proto/worker_service.proto",
     "proto/namespace_service.proto",
     "proto/kernel.proto",
+    "proto/host.proto",
 ];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
