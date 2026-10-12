@@ -48,6 +48,7 @@ fn an_activation_and_its_result_round_trip() {
                             task_type: "charge".into(),
                             ..Default::default()
                         })),
+                        ..Default::default()
                     },
                     kernel::Command {
                         seq: 1,
@@ -58,6 +59,7 @@ fn an_activation_and_its_result_round_trip() {
                                 nanos: 0,
                             }),
                         })),
+                        ..Default::default()
                     },
                 ],
             },
@@ -135,4 +137,21 @@ fn schemes_and_lineage_round_trip() {
     };
     let decoded = kernel::RunStarted::decode(started.encode_to_vec().as_slice()).unwrap();
     assert_eq!(decoded, started);
+}
+
+/// A command for a run under a legacy scheme carries the step id its SDK
+/// made.
+#[test]
+fn a_legacy_command_carries_its_step_id() {
+    let command = kernel::Command {
+        seq: 0,
+        satisfied: true,
+        step_id: "charge_0".into(),
+        what: Some(kernel::command::What::RunTask(kernel::RunTask {
+            task_type: "charge".into(),
+            ..Default::default()
+        })),
+    };
+    let decoded = kernel::Command::decode(command.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded, command);
 }
