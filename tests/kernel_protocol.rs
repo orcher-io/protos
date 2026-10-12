@@ -113,3 +113,26 @@ fn a_task_assignment_and_its_outcome_round_trip() {
     let decoded = host::TaskOutcome::decode(outcome.encode_to_vec().as_slice()).unwrap();
     assert_eq!(decoded, outcome);
 }
+
+/// A worker lists every step-id scheme it can replay, and a run carries its
+/// history lineage.
+#[test]
+fn schemes_and_lineage_round_trip() {
+    let hello = kernel::WorkerHello {
+        supported_step_ids: vec![
+            kernel::StepIdScheme::Kernel as i32,
+            kernel::StepIdScheme::RustV0 as i32,
+        ],
+        ..Default::default()
+    };
+    let decoded = kernel::WorkerHello::decode(hello.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded.supported_step_ids.len(), 2);
+
+    let started = kernel::RunStarted {
+        history_lineage: "3f2a9c1e-7b4d-4e8a-9c2f-1d6b5a4e3c21".into(),
+        step_ids: kernel::StepIdScheme::Kernel as i32,
+        ..Default::default()
+    };
+    let decoded = kernel::RunStarted::decode(started.encode_to_vec().as_slice()).unwrap();
+    assert_eq!(decoded, started);
+}

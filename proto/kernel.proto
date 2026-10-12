@@ -42,14 +42,18 @@ message WorkerHello {
   // The language the SDK runs user code in, for example "typescript".
   string language = 4;
 
-  // The step-id scheme this SDK used before protocol version 2. A run that
-  // recorded no scheme started before version 2 and is replayed with this
-  // one, so its step ids match what it recorded. Unset for an SDK with no
-  // runs from before version 2.
+  // Deprecated: use `supported_step_ids`, which can name more than one. The
+  // single step-id scheme this SDK used before protocol version 2.
   StepIdScheme legacy_step_ids = 5;
 
   // Optional features the SDK supports.
   Capabilities capabilities = 6;
+
+  // Every step-id scheme the SDK can replay: the kernel's, and the legacy
+  // scheme of its own runs from before the kernel assigned ids. The engine
+  // hands a run only to a worker whose list includes the scheme the run is
+  // bound to.
+  repeated StepIdScheme supported_step_ids = 7;
 }
 
 // Capabilities are optional features. None of them changes what a workflow
@@ -73,7 +77,9 @@ message HelloAccepted {
 
 // StepIdScheme is how step ids are derived from the order of durable calls.
 // Ids from different schemes differ, so a run is always replayed with the
-// scheme it started under.
+// scheme it is bound to (at its first activation, never changed after, and
+// copied by reset). Values are only ever added: a change to a scheme is a new
+// value, never an edit to what an existing one means.
 enum StepIdScheme {
   STEP_ID_SCHEME_UNSPECIFIED = 0;
 
@@ -267,6 +273,12 @@ message RunStarted {
 
   // The step-id scheme the kernel uses for this run.
   StepIdScheme step_ids = 7;
+
+  // The run's history lineage: the line of decisions its steps belong to.
+  // Bound with the scheme at the first activation; a reset copies it, a fresh
+  // history (restart-fresh, workflow retry) gets a new one. Default child
+  // workflow ids and the random seed derive from it, never from the run id.
+  string history_lineage = 8;
 }
 
 // StepSettled is the outcome of a task, a recorded value, or a session step.
