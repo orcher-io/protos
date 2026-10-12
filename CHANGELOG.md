@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/orcher-io/protos/compare/v0.3.0...v0.4.0) (2026-10-12)
+
+
+### Features
+
+* add the host protocol messages (orcher.host.v1) ([#18](https://github.com/orcher-io/protos/issues/18)) ([cf9c85c](https://github.com/orcher-io/protos/commit/cf9c85c012d6b358f44d0f6bd499e876eee998d1))
+* list supported step-id schemes and carry the history lineage ([#19](https://github.com/orcher-io/protos/issues/19)) ([95ab651](https://github.com/orcher-io/protos/commit/95ab651c40d6df4dfb6b434c4ddd6b3962583b33)), closes [#17](https://github.com/orcher-io/protos/issues/17)
+
 ## [0.3.0](https://github.com/orcher-io/protos/compare/v0.2.0...v0.3.0) (2026-10-11)
 
 
