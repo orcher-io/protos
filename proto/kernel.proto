@@ -417,14 +417,21 @@ message Commands {
 
 // Command is one durable call.
 message Command {
-  // The call's position: the order the run's code issued it, from 0. The
-  // kernel assigns the step id from it.
+  // The call's position: the order the run's code issued it, from 0. Under
+  // the kernel's step-id scheme the kernel assigns the step id from it.
   uint64 seq = 1;
 
   // The call was answered from history. A satisfied command carries no
   // payload fields (inputs, results, headers): payloads are never compared,
   // so the SDK need not encode them for a call answered from history.
   bool satisfied = 2;
+
+  // The step's id as the SDK's legacy-id module made it, for a run bound to
+  // a legacy step-id scheme (`RunStarted.step_ids`): the kernel cannot derive
+  // those ids from the command, so the SDK supplies them, and the kernel
+  // compares them with history. Empty for a run under the kernel's scheme,
+  // and for commands that are not steps.
+  string step_id = 3;
 
   oneof what {
     RunTask run_task = 10;
