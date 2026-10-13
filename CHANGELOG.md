@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/orcher-io/protos/compare/v0.4.0...v0.5.0) (2026-10-13)
+
+
+### Features
+
+* carry a legacy run's step id on each command ([#21](https://github.com/orcher-io/protos/issues/21)) ([6a0744f](https://github.com/orcher-io/protos/commit/6a0744f6349ce75b0ae7695d98950188c72d54d0))
+
 ## [0.4.0](https://github.com/orcher-io/protos/compare/v0.3.0...v0.4.0) (2026-10-12)
 
 
