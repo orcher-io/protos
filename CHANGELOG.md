@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/orcher-io/protos/compare/v0.5.0...v0.6.0) (2026-10-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* Resolution.what gains a variant, so a Rust match over it that lists every variant must handle ChildStarted.
+
+### Features
+
+* add a ChildStarted resolution to the kernel protocol ([#25](https://github.com/orcher-io/protos/issues/25)) ([b9a7c7f](https://github.com/orcher-io/protos/commit/b9a7c7f2b177759e5f82d073692fa2ec45affcb2))
+
 ## [0.5.0](https://github.com/orcher-io/protos/compare/v0.4.0...v0.5.0) (2026-10-13)
 
 
