@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.0](https://github.com/orcher-io/protos/compare/v0.6.0...v0.7.0) (2026-10-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* RestartFresh gains a field, so Rust code building it with a struct literal that names every field must add it.
+
+### Features
+
+* carry a restart's execution timeout in the kernel protocol ([#27](https://github.com/orcher-io/protos/issues/27)) ([d041e25](https://github.com/orcher-io/protos/commit/d041e25153014f525488b9df711ebd5c7a3e5dc0))
+
 ## [0.6.0](https://github.com/orcher-io/protos/compare/v0.5.0...v0.6.0) (2026-10-13)
 
 
