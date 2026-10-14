@@ -188,7 +188,9 @@ message RetryPolicy {
   // Upper bound on the delay between retries.
   google.protobuf.Duration max_delay = 3;
 
-  // Maximum number of attempts, the first included. 0 takes the default.
+  // Maximum number of attempts, the first included. 0 is unlimited, as the
+  // engine reads it. A policy left out altogether takes the kernel's
+  // defaults.
   uint32 max_attempts = 4;
 
   // Failure types (`Failure.error_type`) that are never retried.
@@ -627,6 +629,10 @@ message RestartFresh {
 
   // The new run's arguments, in parameter order.
   repeated Payload input = 3;
+
+  // The new run's execution timeout. Unset: the engine's default, as for a
+  // run started without one.
+  google.protobuf.Duration execution_timeout = 4;
 }
 
 // UpsertLabels sets labels on the run for search. Compared on its kind only.
