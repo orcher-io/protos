@@ -642,6 +642,10 @@ message RestartFresh {
   // The new run's execution timeout. Unset: the engine's default, as for a
   // run started without one.
   google.protobuf.Duration execution_timeout = 4;
+
+  // How the new run is retried. Unset: it keeps the retry policy of the run
+  // it replaces.
+  RetryPolicy retry_policy = 5;
 }
 
 // UpsertLabels sets labels on the run for search. Compared on its kind only.
