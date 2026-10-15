@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/orcher-io/protos/compare/v0.7.0...v0.8.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* Resolution gains a field, so Rust code building it with a struct literal that names every field must add it.
+
+### Features
+
+* carry each resolution's place in the run's order ([#31](https://github.com/orcher-io/protos/issues/31)) ([0f23809](https://github.com/orcher-io/protos/commit/0f238092b172115fa1eb6b7e6d52352ffc580b73))
+
 ## [0.7.0](https://github.com/orcher-io/protos/compare/v0.6.0...v0.7.0) (2026-10-14)
 
 
