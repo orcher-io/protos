@@ -20,6 +20,7 @@ fn an_activation_and_its_result_round_trip() {
             step_id: "task_0".into(),
             at: None,
             replaying: true,
+            sequence: 2,
             what: Some(kernel::resolution::What::Step(kernel::StepSettled {
                 outcome: Some(kernel::Outcome {
                     result: Some(kernel::outcome::Result::Value(kernel::Payload {

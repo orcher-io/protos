@@ -238,6 +238,14 @@ message Resolution {
   // offer this to user code as a way to decide whether to perform an effect.
   bool replaying = 3;
 
+  // Where this outcome comes in the order the run observes its outcomes:
+  // greater than that of every resolution before it in the activation, so
+  // two outcomes compare by it exactly where their `at` may tie (two
+  // outcomes recorded in the same millisecond). Which of two outcomes came
+  // first is decided by it, never by `at`. Only its order is meaningful, not
+  // its value. 0 from a kernel that predates it.
+  uint64 sequence = 4;
+
   // What happened.
   oneof what {
     RunStarted started = 10;
@@ -342,15 +350,16 @@ message UpdateArrived {
   repeated Payload args = 3;
 }
 
-// CancelAsked says the run was asked to cancel. The kernel places it at the
-// one wait it is delivered to: the first durable wait whose outcome history
-// did not record at or before `requested_at`. Later waits run normally, so
-// the run can clean up.
+// CancelAsked says the run was asked to cancel. It is delivered at one wait:
+// the first durable wait that has no outcome, or whose outcome's resolution
+// comes after this one's (a greater `sequence`). Later waits run normally, so
+// the run can clean up. Only the first CancelAsked of a run is delivered.
 message CancelAsked {
   // Why, as the requester said.
   string reason = 1;
 
-  // When the request was recorded.
+  // When the request was recorded. Informational: where the request falls
+  // among the run's outcomes is its resolution's `sequence`.
   google.protobuf.Timestamp requested_at = 2;
 }
 
