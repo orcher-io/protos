@@ -67,9 +67,43 @@ fn an_activation_and_its_result_round_trip() {
         )),
         queries: vec![],
         updates: vec![],
+        calls_before_failure: None,
     };
     let decoded = kernel::RunActivationResult::decode(result.encode_to_vec().as_slice()).unwrap();
     assert_eq!(decoded, result);
+}
+
+/// A failure answer carries the calls the code made before it failed, beside
+/// the failure; one that made no call says so with an empty list, which stays
+/// apart from an answer that says nothing about its calls.
+#[test]
+fn a_failure_answer_carries_the_calls_made_before_it() {
+    let failed = |calls_before_failure| kernel::RunActivationResult {
+        activation_id: b"act-2".to_vec(),
+        outcome: Some(kernel::run_activation_result::Outcome::WorkflowFailed(
+            kernel::Failure {
+                message: "out of stock".into(),
+                ..Default::default()
+            },
+        )),
+        calls_before_failure,
+        ..Default::default()
+    };
+    let with_calls = failed(Some(kernel::Commands {
+        commands: vec![kernel::Command {
+            seq: 0,
+            satisfied: true,
+            step_id: "charge_0".into(),
+            what: Some(kernel::command::What::RunTask(Default::default())),
+        }],
+    }));
+    let made_none = failed(Some(kernel::Commands::default()));
+    let unsaid = failed(None);
+    for answer in [with_calls, made_none, unsaid] {
+        let decoded =
+            kernel::RunActivationResult::decode(answer.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(decoded, answer);
+    }
 }
 
 /// The kernel protocol is its own package: the engine API's types stay at the
