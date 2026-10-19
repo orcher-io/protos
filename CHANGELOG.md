@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/orcher-io/protos/compare/v0.9.0...v0.10.0) (2026-10-19)
+
+
+### Features
+
+* let a workflow failure carry the calls made before it ([#35](https://github.com/orcher-io/protos/issues/35)) ([6b42c29](https://github.com/orcher-io/protos/commit/6b42c29e1f209f0db88bb8b7d091dbc9dcf44d04))
+
 ## [0.9.0](https://github.com/orcher-io/protos/compare/v0.8.0...v0.9.0) (2026-10-15)
 
 
