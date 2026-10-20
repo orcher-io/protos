@@ -22,6 +22,18 @@ service ExecutionService {
   // It long-polls: it blocks until work is available or the poll times out.
   rpc PollTaskExecution(PollTaskExecutionRequest) returns (PollTaskExecutionResponse);
 
+  // PollWorkflowExecutions polls for up to `max_items` workflow activations
+  // at once, each claimed for the polling worker as one poll would claim it.
+  // It long-polls like PollWorkflowExecution, and answers as soon as one
+  // activation is ready, with as many as are ready up to the limit.
+  rpc PollWorkflowExecutions(PollWorkflowExecutionsRequest) returns (PollWorkflowExecutionsResponse);
+
+  // PollTaskExecutions polls for up to `max_items` tasks at once, each
+  // started for the polling worker as one poll would start it. It long-polls
+  // like PollTaskExecution, and answers as soon as one task is ready, with as
+  // many as are ready up to the limit.
+  rpc PollTaskExecutions(PollTaskExecutionsRequest) returns (PollTaskExecutionsResponse);
+
   // CompleteWorkflowExecution reports the result of a workflow execution step:
   // the commands the workflow produced and any query or update results.
   rpc CompleteWorkflowExecution(CompleteWorkflowExecutionRequest) returns (CompleteWorkflowExecutionResponse);
@@ -280,6 +292,45 @@ message PollTaskExecutionRequest {
   // What the service does with the tasks it is handed; see TaskCapabilities.
   // Unset means nothing beyond the baseline.
   TaskCapabilities task_capabilities = 7;
+}
+
+// PollWorkflowExecutionsRequest asks for several workflow activations in one
+// poll.
+message PollWorkflowExecutionsRequest {
+  // The poll itself: queue, namespace, identity, timeout and the rest, as
+  // for a poll for one activation.
+  PollWorkflowExecutionRequest poll = 1;
+
+  // The most activations to hand out: as many as the worker has room to
+  // run. The server may hand out fewer, and caps how many one poll takes so
+  // that one worker cannot drain a queue other workers poll. 0 means 1.
+  uint32 max_items = 2;
+}
+
+// PollWorkflowExecutionsResponse carries the activations a poll claimed.
+message PollWorkflowExecutionsResponse {
+  // Each activation as a poll for one would carry it. Empty when the poll
+  // timed out with none ready.
+  repeated PollWorkflowExecutionResponse executions = 1;
+}
+
+// PollTaskExecutionsRequest asks for several tasks in one poll.
+message PollTaskExecutionsRequest {
+  // The poll itself: queue, namespace, identity, timeout and the rest, as
+  // for a poll for one task.
+  PollTaskExecutionRequest poll = 1;
+
+  // The most tasks to hand out: as many as the worker has room to run. The
+  // server may hand out fewer, and caps how many one poll takes so that one
+  // worker cannot drain a queue other workers poll. 0 means 1.
+  uint32 max_items = 2;
+}
+
+// PollTaskExecutionsResponse carries the tasks a poll started.
+message PollTaskExecutionsResponse {
+  // Each task as a poll for one would carry it. Empty when the poll timed
+  // out with none ready.
+  repeated PollTaskExecutionResponse tasks = 1;
 }
 
 // TaskCapabilities declares what a service does with the tasks it runs,
