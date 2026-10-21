@@ -55,6 +55,12 @@ service ExecutionService {
   // details, and tells the service whether the task has been asked to cancel.
   rpc RecordTaskHeartbeat(RecordTaskHeartbeatRequest) returns (RecordTaskHeartbeatResponse);
 
+  // RecordTaskHeartbeats sends the heartbeats of several running tasks in
+  // one call, each as RecordTaskHeartbeat would send it, and answers each:
+  // whether it was recorded, and whether its task has been asked to cancel.
+  // One task's heartbeat being refused does not refuse the others.
+  rpc RecordTaskHeartbeats(RecordTaskHeartbeatsRequest) returns (RecordTaskHeartbeatsResponse);
+
   // RespondQueryTask responds to a workflow query.
   rpc RespondQueryTask(RespondQueryTaskRequest) returns (RespondQueryTaskResponse);
 
@@ -486,6 +492,52 @@ message RecordTaskHeartbeatResponse {
   // Cancellation of the task has been requested; it should stop and report
   // itself canceled.
   bool cancel_requested = 1;
+}
+
+// RecordTaskHeartbeatsRequest sends the heartbeats of several running tasks.
+message RecordTaskHeartbeatsRequest {
+  // Namespace of the tasks.
+  string namespace = 1;
+
+  // Identity of the service sending them.
+  string identity = 2;
+
+  // One heartbeat per task.
+  repeated TaskHeartbeatEntry heartbeats = 3;
+}
+
+// TaskHeartbeatEntry is one task's heartbeat in RecordTaskHeartbeatsRequest.
+message TaskHeartbeatEntry {
+  // Task token from PollTaskExecutionResponse.
+  bytes task_token = 1;
+
+  // Progress details to record (optional), as in RecordTaskHeartbeatRequest.
+  bytes details = 2;
+}
+
+// RecordTaskHeartbeatsResponse answers each heartbeat of the request.
+message RecordTaskHeartbeatsResponse {
+  // One answer per heartbeat, in the order the request sent them.
+  repeated TaskHeartbeatAnswer answers = 1;
+}
+
+// TaskHeartbeatAnswer says what became of one task's heartbeat.
+message TaskHeartbeatAnswer {
+  // The task token the heartbeat carried.
+  bytes task_token = 1;
+
+  // Whether the task has been asked to cancel. Set only for a heartbeat
+  // that was recorded.
+  bool cancel_requested = 2;
+
+  // 0 (OK) when the heartbeat was recorded. Otherwise the gRPC status code
+  // RecordTaskHeartbeat would have refused it with: NOT_FOUND for a token
+  // that names no task the caller may act on, FAILED_PRECONDITION for a task
+  // that is no longer running, UNAVAILABLE for one that may be sent again.
+  int32 refused_code = 3;
+
+  // Why it was refused; empty when it was recorded.
+  string refused_message = 4;
 }
 
 // RespondQueryTaskRequest responds to a workflow query.
