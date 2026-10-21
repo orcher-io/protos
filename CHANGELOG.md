@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.12.0](https://github.com/orcher-io/protos/compare/v0.11.0...v0.12.0) (2026-10-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* ExecutionService gains a method, which every server implementation must provide.
+
+### Features
+
+* send several running tasks' heartbeats in one call ([#40](https://github.com/orcher-io/protos/issues/40)) ([c3bf64a](https://github.com/orcher-io/protos/commit/c3bf64a8eb4339adf8cae4b7f56ef1c9776d629c))
+
 ## [0.11.0](https://github.com/orcher-io/protos/compare/v0.10.0...v0.11.0) (2026-10-20)
 
 
