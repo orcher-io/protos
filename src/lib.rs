@@ -58,6 +58,16 @@ pub mod orcher {
             tonic::include_proto!("orcher.host.v1");
         }
     }
+
+    /// The client protocol (`orcher.client.v1`): the calls a language SDK's
+    /// client makes through sdk-core, and their answers. Not re-exported at
+    /// the crate root.
+    pub mod client {
+        #[allow(clippy::all)]
+        pub mod v1 {
+            tonic::include_proto!("orcher.client.v1");
+        }
+    }
 }
 
 pub use orcher::v1::*;
@@ -67,6 +77,9 @@ pub use orcher::kernel;
 
 /// The host protocol, as `orcher_proto::host::v1`.
 pub use orcher::host;
+
+/// The client protocol, as `orcher_proto::client::v1`.
+pub use orcher::client;
 
 /// Version of the protocol definitions in this crate.
 pub const PROTOCOL_VERSION: &str = env!("CARGO_PKG_VERSION");
