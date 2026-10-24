@@ -133,6 +133,14 @@ message PollWorkflowExecutionRequest {
   // from any process, so a shutdown of its identity applies to it only for a
   // few minutes from when the shutdown was sent. A service should send it.
   string worker_instance_id = 9;
+
+  // Every step-id scheme this worker can replay: the kernel's, if it lets the
+  // kernel assign ids, and its SDK's own legacy scheme. The server hands it
+  // only runs bound to one of them, and binds a run it activates for the
+  // first time: to the kernel's scheme when the run is new and the worker
+  // supports it, otherwise to the worker's legacy scheme. Empty, a worker
+  // from before schemes: it gets only runs not bound yet, and binds nothing.
+  repeated StepIdScheme supported_step_ids = 10;
 }
 
 // PollWorkflowExecutionResponse contains workflow execution work.
@@ -183,6 +191,16 @@ message PollWorkflowExecutionResponse {
   // Updates to process, if any. Updates are synchronous mutations sent with
   // WorkflowService.UpdateWorkflow.
   repeated UpdateRequest updates = 15;
+
+  // The step-id scheme the run is bound to. UNSPECIFIED only for a poll that
+  // reported no schemes.
+  StepIdScheme step_ids = 16;
+
+  // The run's history lineage: the line of decisions its steps belong to.
+  // Bound with the scheme; a reset copies it, and a fresh history
+  // (restart-fresh, workflow retry) gets its own. Default child workflow ids
+  // and the run's random seed derive from it, never from the run id.
+  string history_lineage = 17;
 }
 
 // CompleteWorkflowExecutionRequest completes a workflow execution step.

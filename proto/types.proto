@@ -905,3 +905,25 @@ message Command {
     UpsertLabelsCommandAttributes upsert_labels = 24;
   }
 }
+
+// StepIdScheme is how a run's step ids are derived from the order of its
+// durable calls. A run is bound to one at its first activation and never
+// changes after; a reset copies it. Values are only ever added: a change to
+// a scheme is a new value, never an edit to what an existing one means.
+// The same values as orcher.kernel.v1.StepIdScheme.
+enum StepIdScheme {
+  // Not bound: a run no worker reporting its schemes has activated yet.
+  STEP_ID_SCHEME_UNSPECIFIED = 0;
+
+  // The kernel's scheme: the kernel assigns every id.
+  STEP_ID_SCHEME_KERNEL = 1;
+
+  // The Rust SDK's ids before the kernel assigned them. Frozen.
+  STEP_ID_SCHEME_RUST_V0 = 2;
+
+  // The Python SDK's ids before the kernel assigned them. Frozen.
+  STEP_ID_SCHEME_PYTHON_V0 = 3;
+
+  // The TypeScript SDK's ids before the kernel assigned them. Frozen.
+  STEP_ID_SCHEME_TYPESCRIPT_V0 = 4;
+}
