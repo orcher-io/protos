@@ -102,6 +102,7 @@ python -m grpc_tools.protoc -Iproto --python_out=. --grpc_python_out=. proto/*.p
 | `namespace_service.proto` | `NamespaceService`: namespace management |
 | `kernel.proto` | The kernel protocol (`orcher.kernel.v1`): the exchange between the kernel (sdk-core) and a language SDK, not part of the gRPC API |
 | `host.proto` | The host protocol (`orcher.host.v1`): the tasks and actor operations a worker host hands a language SDK, beside the kernel protocol's workflow activations |
+| `client.proto` | The client protocol (`orcher.client.v1`): the calls a language SDK's client makes through sdk-core, each one encoded message through a single entry, and their answers |
 
 <br />
 

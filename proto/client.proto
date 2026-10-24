@@ -1,0 +1,460 @@
+syntax = "proto3";
+
+// The client protocol: what a language SDK's client asks sdk-core to do on
+// the engine, and what comes back. Every call crosses as one ClientCall's
+// bytes and is answered with one ClientAnswer's, through a single entry on a
+// connected client, so a language binding wraps one function rather than one
+// per call, and a new client call is a change to this file and to sdk-core,
+// not to every binding. sdk-core does the calls' validation, defaults,
+// retries, credentials and error mapping once.
+//
+// It is independent of the engine's own protocol (`orcher.v1`): sdk-core
+// speaks that to the engine on the language's behalf.
+package orcher.client.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// ============================================================================
+// The envelope
+// ============================================================================
+
+// ClientCall is one call a language's client makes.
+message ClientCall {
+  oneof call {
+    StartWorkflow start_workflow = 1;
+    WaitForResult wait_for_result = 2;
+    GetStatus get_status = 3;
+    Describe describe = 4;
+    ListWorkflows list_workflows = 5;
+    SearchWorkflows search_workflows = 6;
+    SendEvent send_event = 7;
+    Query query = 8;
+    Update update = 9;
+    Cancel cancel = 10;
+    Terminate terminate = 11;
+    Reset reset = 12;
+    InvokeActor invoke_actor = 13;
+    CreateNamespace create_namespace = 14;
+    GetNamespace get_namespace = 15;
+    ListNamespaces list_namespaces = 16;
+    UpdateNamespace update_namespace = 17;
+    DeprecateNamespace deprecate_namespace = 18;
+    DeleteNamespace delete_namespace = 19;
+  }
+
+  // The namespace the call targets. Empty: the connection's.
+  string namespace = 100;
+
+  // The longest the call may take. Unset: the client's timeout. A wait for a
+  // workflow's result is bounded by its own deadline instead.
+  google.protobuf.Duration timeout = 101;
+}
+
+// ClientAnswer is how a call ended: what it answered, or why it could not.
+message ClientAnswer {
+  oneof answer {
+    // The call failed; nothing else is set.
+    ClientError error = 1;
+
+    Started started = 2;
+    WorkflowResult result = 3;
+    WorkflowStatus status = 4;
+    WorkflowDescription description = 5;
+    WorkflowPage page = 6;
+    // A query's or an update's answer, or an actor operation's result.
+    bytes value = 7;
+    // A reset's new run.
+    WorkflowRef reset_to = 8;
+    Namespace namespace = 9;
+    NamespacePage namespaces = 10;
+    // A call that answers nothing succeeded.
+    Done done = 11;
+  }
+}
+
+// Done is the answer of a call that answers nothing.
+message Done {}
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+// ErrorCode is what an error means, the same for every language.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  // No workflow has that id (in that run).
+  ERROR_CODE_WORKFLOW_NOT_FOUND = 1;
+  // The workflow id is in use; ClientError.run_id names the run holding it.
+  ERROR_CODE_WORKFLOW_ALREADY_EXISTS = 2;
+  // The workflow failed. ClientError.status says how it ended.
+  ERROR_CODE_WORKFLOW_EXECUTION_FAILED = 3;
+  // The workflow was cancelled.
+  ERROR_CODE_WORKFLOW_CANCELED = 4;
+  // The workflow was terminated.
+  ERROR_CODE_WORKFLOW_TERMINATED = 5;
+  // The workflow ran out of its own timeout.
+  ERROR_CODE_WORKFLOW_TIMEOUT = 6;
+  // The call ran out of its time.
+  ERROR_CODE_TIMEOUT = 7;
+  // The engine could not be reached.
+  ERROR_CODE_CONNECTION_FAILED = 8;
+  ERROR_CODE_UNAUTHENTICATED = 9;
+  ERROR_CODE_PERMISSION_DENIED = 10;
+  // The call was malformed or asked for something invalid.
+  ERROR_CODE_INVALID_ARGUMENT = 11;
+  ERROR_CODE_NOT_FOUND = 12;
+  ERROR_CODE_ALREADY_EXISTS = 13;
+  ERROR_CODE_UNAVAILABLE = 14;
+  ERROR_CODE_RESOURCE_EXHAUSTED = 15;
+  ERROR_CODE_FAILED_PRECONDITION = 16;
+  ERROR_CODE_ABORTED = 17;
+  ERROR_CODE_OUT_OF_RANGE = 18;
+  ERROR_CODE_UNIMPLEMENTED = 19;
+  ERROR_CODE_DATA_LOSS = 20;
+  ERROR_CODE_INTERNAL = 21;
+  ERROR_CODE_UNKNOWN = 22;
+}
+
+// ClientError is why a call failed.
+message ClientError {
+  ErrorCode code = 1;
+
+  // What happened, for people.
+  string message = 2;
+
+  // Whether the call could succeed if made again.
+  bool retryable = 3;
+
+  // The run the error is about, when there is one: for
+  // ERROR_CODE_WORKFLOW_ALREADY_EXISTS, the run holding the id.
+  string run_id = 4;
+
+  // For a workflow that ended without a result, how it ended.
+  WorkflowStatus status = 5;
+}
+
+// ============================================================================
+// Shared vocabulary
+// ============================================================================
+
+// WorkflowRef names one workflow, and one of its runs when run_id is set.
+message WorkflowRef {
+  string workflow_id = 1;
+  // Empty: the latest run.
+  string run_id = 2;
+}
+
+// WorkflowStatus is where a workflow run is.
+enum WorkflowStatus {
+  WORKFLOW_STATUS_UNSPECIFIED = 0;
+  WORKFLOW_STATUS_RUNNING = 1;
+  WORKFLOW_STATUS_COMPLETED = 2;
+  WORKFLOW_STATUS_FAILED = 3;
+  WORKFLOW_STATUS_CANCELLED = 4;
+  WORKFLOW_STATUS_TERMINATED = 5;
+  WORKFLOW_STATUS_TIMED_OUT = 6;
+  WORKFLOW_STATUS_RESTARTED_FRESH = 7;
+}
+
+// RetryPolicy is how a failed workflow run is retried, as a fresh run.
+message RetryPolicy {
+  // Attempts, the first included; 0 is unlimited.
+  uint32 max_attempts = 1;
+  // Delay before the first retry. Unset: the engine's default.
+  google.protobuf.Duration initial_interval = 2;
+  // Upper bound on the delay between retries. Unset: the engine's default.
+  google.protobuf.Duration max_interval = 3;
+  // Multiplier applied to the delay after each retry. 0: the engine's default.
+  double backoff_coefficient = 4;
+  // Error types that are never retried.
+  repeated string non_retryable_errors = 5;
+}
+
+// IdReusePolicy is what a start does when its workflow id is already in use.
+// An id whose run is still open is refused under every policy but
+// TERMINATE_IF_RUNNING.
+enum IdReusePolicy {
+  // The engine's default, ALLOW_DUPLICATE.
+  ID_REUSE_POLICY_UNSPECIFIED = 0;
+  // Start once the previous run has closed, however it closed.
+  ID_REUSE_POLICY_ALLOW_DUPLICATE = 1;
+  // Start once the previous run has closed without completing.
+  ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY = 2;
+  // Never start an id a run has carried before.
+  ID_REUSE_POLICY_REJECT_DUPLICATE = 3;
+  // Terminate the open run, if there is one, and start.
+  ID_REUSE_POLICY_TERMINATE_IF_RUNNING = 4;
+}
+
+// ============================================================================
+// Workflows
+// ============================================================================
+
+// StartWorkflow starts a workflow run. Answered with Started.
+message StartWorkflow {
+  // Empty: the engine assigns one.
+  string workflow_id = 1;
+  string workflow_type = 2;
+  string task_queue = 3;
+  // The workflow's input, encoded as the workflow reads it.
+  bytes input = 4;
+  // Bounds the workflow across all its runs. Unset: none.
+  google.protobuf.Duration execution_timeout = 5;
+  // Bounds a single run. Unset: none.
+  google.protobuf.Duration run_timeout = 6;
+  // Bounds each of the workflow's tasks by default. Unset: the engine's.
+  google.protobuf.Duration task_timeout = 7;
+  // Runs the workflow on a cron schedule. Empty: once.
+  string cron_schedule = 8;
+  // Unset: a failed run is not retried.
+  RetryPolicy retry_policy = 9;
+  IdReusePolicy id_reuse_policy = 10;
+}
+
+// Started names the run a start began.
+message Started {
+  WorkflowRef workflow = 1;
+}
+
+// WaitForResult waits for a run to end. Answered with WorkflowResult, or an
+// error whose status says how a run without a result ended.
+message WaitForResult {
+  WorkflowRef workflow = 1;
+  // How long to wait. Unset: until the run ends.
+  google.protobuf.Duration wait = 2;
+}
+
+// WorkflowResult is what a run returned.
+message WorkflowResult {
+  bytes value = 1;
+}
+
+// GetStatus asks where a run is. Answered with WorkflowStatus.
+message GetStatus {
+  WorkflowRef workflow = 1;
+}
+
+// Describe asks for everything known about a run. Answered with
+// WorkflowDescription.
+message Describe {
+  WorkflowRef workflow = 1;
+}
+
+// WorkflowSummary is a run as lists and searches report it.
+message WorkflowSummary {
+  WorkflowRef workflow = 1;
+  string workflow_type = 2;
+  string task_queue = 3;
+  string namespace = 4;
+  WorkflowStatus status = 5;
+  google.protobuf.Timestamp start_time = 6;
+  // Unset while it runs.
+  google.protobuf.Timestamp close_time = 7;
+  // How long it ran, once closed.
+  google.protobuf.Duration execution_duration = 8;
+  int64 journal_length = 9;
+  // The parent's run, for a child workflow.
+  ParentRef parent = 10;
+  map<string, string> labels = 11;
+  map<string, string> annotations = 12;
+  repeated string tags = 13;
+  string started_by = 14;
+  int32 attempt = 15;
+  string cron_schedule = 16;
+  int64 state_transition_count = 17;
+}
+
+// ParentRef names the parent run of a child workflow.
+message ParentRef {
+  string namespace = 1;
+  WorkflowRef workflow = 2;
+}
+
+// WorkflowDescription is a run in full: its summary, what it is waiting on,
+// and what it runs under.
+message WorkflowDescription {
+  WorkflowSummary summary = 1;
+  int32 pending_tasks = 2;
+  int32 pending_timers = 3;
+  int32 pending_events = 4;
+  // What the run runs under. Unset when the engine does not say.
+  WorkflowConfig config = 5;
+}
+
+// WorkflowConfig is what a run runs under.
+message WorkflowConfig {
+  string task_queue = 1;
+  google.protobuf.Duration execution_timeout = 2;
+  google.protobuf.Duration run_timeout = 3;
+  google.protobuf.Duration task_timeout = 4;
+  RetryPolicy retry_policy = 5;
+  string cron_schedule = 6;
+}
+
+// ListOrder is the order a list returns runs in.
+enum ListOrder {
+  // The engine's default, newest started first.
+  LIST_ORDER_UNSPECIFIED = 0;
+  LIST_ORDER_START_TIME_ASC = 1;
+  LIST_ORDER_START_TIME_DESC = 2;
+  LIST_ORDER_CLOSE_TIME_ASC = 3;
+  LIST_ORDER_CLOSE_TIME_DESC = 4;
+}
+
+// ListWorkflows lists runs, a page at a time. Answered with WorkflowPage.
+message ListWorkflows {
+  // 0: the engine's default.
+  int32 page_size = 1;
+  // From the previous page; empty for the first.
+  bytes page_token = 2;
+  // Empty: any.
+  string workflow_type = 3;
+  // Empty: any.
+  string task_queue = 4;
+  // Empty: any status.
+  repeated WorkflowStatus statuses = 5;
+  ListOrder order = 6;
+}
+
+// SearchWorkflows lists runs matching a query, a page at a time. Answered
+// with WorkflowPage.
+message SearchWorkflows {
+  string query = 1;
+  int32 page_size = 2;
+  bytes page_token = 3;
+}
+
+// WorkflowPage is one page of runs.
+message WorkflowPage {
+  repeated WorkflowSummary workflows = 1;
+  // Empty: this is the last page.
+  bytes next_page_token = 2;
+}
+
+// SendEvent delivers an event to a running workflow. Answered with Done.
+message SendEvent {
+  WorkflowRef workflow = 1;
+  string event_name = 2;
+  bytes payload = 3;
+}
+
+// Query asks a running workflow a question. Answered with the answer's
+// value.
+message Query {
+  WorkflowRef workflow = 1;
+  string query_name = 2;
+  bytes args = 3;
+}
+
+// Update asks a running workflow to change and say how. Answered with the
+// update's value.
+message Update {
+  WorkflowRef workflow = 1;
+  string update_name = 2;
+  bytes args = 3;
+}
+
+// Cancel asks a run to cancel. Answered with Done.
+message Cancel {
+  WorkflowRef workflow = 1;
+  // How long the workflow may take to clean up before it is ended. Unset:
+  // the engine's limit.
+  google.protobuf.Duration cleanup_timeout = 2;
+}
+
+// Terminate ends a run at once, without cleanup. Answered with Done.
+message Terminate {
+  WorkflowRef workflow = 1;
+  string reason = 2;
+}
+
+// Reset restarts a run from a point in its journal. Answered with the new
+// run.
+message Reset {
+  WorkflowRef workflow = 1;
+  // The journal entry to restart from.
+  int64 event_id = 2;
+  string reason = 3;
+}
+
+// ============================================================================
+// Actors
+// ============================================================================
+
+// InvokeActor runs an operation on an actor and waits for its result.
+// Answered with the result's value.
+message InvokeActor {
+  string actor_name = 1;
+  string key = 2;
+  string operation = 3;
+  bytes payload = 4;
+  // How long the operation may take. Unset: the engine's default.
+  google.protobuf.Duration operation_timeout = 5;
+  // Deduplicates retried invocations. Empty: none.
+  string idempotency_key = 6;
+}
+
+// ============================================================================
+// Namespaces
+// ============================================================================
+
+// Namespace is a namespace, as the engine reports it.
+message Namespace {
+  string name = 1;
+  // `active`, `deprecated` or `deleted`.
+  string status = 2;
+  string description = 3;
+  string owner_email = 4;
+  int32 retention_period_days = 5;
+  map<string, string> data = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// CreateNamespace creates a namespace. Answered with it.
+message CreateNamespace {
+  string name = 1;
+  string description = 2;
+  int32 retention_period_days = 3;
+  string owner_email = 4;
+}
+
+// GetNamespace asks for a namespace. Answered with it.
+message GetNamespace {
+  string name = 1;
+}
+
+// ListNamespaces lists namespaces, a page at a time. Answered with
+// NamespacePage.
+message ListNamespaces {
+  int32 page_size = 1;
+  int32 page_offset = 2;
+}
+
+// NamespacePage is one page of namespaces.
+message NamespacePage {
+  repeated Namespace namespaces = 1;
+  // How many namespaces there are in all.
+  int64 total = 2;
+}
+
+// UpdateNamespace changes a namespace. An empty field or a 0 leaves that
+// part as it is. Answered with the namespace.
+message UpdateNamespace {
+  string name = 1;
+  string description = 2;
+  string owner_email = 3;
+  int32 retention_period_days = 4;
+}
+
+// DeprecateNamespace stops new workflows starting in a namespace. Answered
+// with the namespace.
+message DeprecateNamespace {
+  string name = 1;
+}
+
+// DeleteNamespace deletes a namespace. Answered with Done.
+message DeleteNamespace {
+  string name = 1;
+}
