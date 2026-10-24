@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/orcher-io/protos/compare/v0.12.0...v0.13.0) (2026-10-24)
+
+
+### Features
+
+* add the client protocol ([#42](https://github.com/orcher-io/protos/issues/42)) ([daa3e72](https://github.com/orcher-io/protos/commit/daa3e7209a14bfde6c8326b7586e4339f41f7024))
+
 ## [0.12.0](https://github.com/orcher-io/protos/compare/v0.11.0...v0.12.0) (2026-10-21)
 
 
