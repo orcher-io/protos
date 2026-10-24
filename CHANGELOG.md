@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/orcher-io/protos/compare/v0.13.0...v0.14.0) (2026-10-24)
+
+
+### Features
+
+* carry a run's step-id scheme and history lineage between engine and worker ([#44](https://github.com/orcher-io/protos/issues/44)) ([c7c9a67](https://github.com/orcher-io/protos/commit/c7c9a676f1e4870dffb78929150343ac5d0ca287))
+
 ## [0.13.0](https://github.com/orcher-io/protos/compare/v0.12.0...v0.13.0) (2026-10-24)
 
 
