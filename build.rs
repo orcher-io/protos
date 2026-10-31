@@ -11,6 +11,7 @@ const PROTOS: &[&str] = &[
     "proto/namespace_service.proto",
     "proto/kernel.proto",
     "proto/host.proto",
+    "proto/host_service.proto",
     "proto/client.proto",
 ];
 
