@@ -1,0 +1,343 @@
+syntax = "proto3";
+
+// The worker host as a service: the same contract as the Rust host API
+// (sdk-core's `worker::host::Host`), so a language runtime with gRPC can run a
+// worker with no native code by talking to a host over a local socket.
+//
+// One server hosts one worker. The language starts it once with its
+// configuration and registrations, then pulls: it asks for the next workflow
+// activation, task or actor operation when it has room to run one, and
+// returns the result. The host never calls into the language. Shutdown drains
+// the worker; every pull then comes back empty.
+//
+// The configuration carries credentials (an API key, a client private key), so
+// a host serving this must listen only where the language alone can reach it:
+// a Unix socket with owner-only permissions, or loopback.
+package orcher.host.v1;
+
+import "google/protobuf/duration.proto";
+import "host.proto";
+import "kernel.proto";
+
+service HostService {
+  // Connects the worker to the engine and starts the drivers its
+  // registrations need. Once per host: a second call fails with
+  // FAILED_PRECONDITION.
+  rpc Start(StartRequest) returns (StartResponse);
+
+  // Waits for the next workflow activation. Empty once the host is stopping.
+  rpc NextActivation(NextActivationRequest) returns (NextActivationResponse);
+
+  // Answers an activation.
+  rpc CompleteActivation(CompleteActivationRequest) returns (CompleteActivationResponse);
+
+  // Waits for the next task. Empty once the host is stopping.
+  rpc NextTask(NextTaskRequest) returns (NextTaskResponse);
+
+  // Reports a running task alive, with optional progress details, and learns
+  // whether it has been asked to cancel. The host batches heartbeats to the
+  // engine; this call does not wait for one to be sent.
+  rpc HeartbeatTask(HeartbeatTaskRequest) returns (HeartbeatTaskResponse);
+
+  // Waits until a running task is asked to cancel. Answers false if the task
+  // ends, or the host stops, first.
+  rpc WaitTaskCancelled(WaitTaskCancelledRequest) returns (WaitTaskCancelledResponse);
+
+  // Reports how a task attempt ended.
+  rpc CompleteTask(CompleteTaskRequest) returns (CompleteTaskResponse);
+
+  // Waits for the next actor operation. Empty once the host is stopping.
+  rpc NextActorOperation(NextActorOperationRequest) returns (NextActorOperationResponse);
+
+  // Reports how an actor operation ended.
+  rpc CompleteActorOperation(CompleteActorOperationRequest) returns (CompleteActorOperationResponse);
+
+  // Reads one key of an actor's state.
+  rpc GetActorState(GetActorStateRequest) returns (GetActorStateResponse);
+
+  // Writes one key of an actor's state. With `expected_version` set, the write
+  // is refused with FAILED_PRECONDITION unless the stored version matches.
+  rpc SetActorState(SetActorStateRequest) returns (SetActorStateResponse);
+
+  // Deletes one key of an actor's state.
+  rpc DeleteActorState(DeleteActorStateRequest) returns (DeleteActorStateResponse);
+
+  // Lists the keys of an actor's state that start with a prefix.
+  rpc ListActorStateKeys(ListActorStateKeysRequest) returns (ListActorStateKeysResponse);
+
+  // Stops the worker: gives the language its shutdown grace to finish the work
+  // it holds, hands workflow activations still held back to the engine, and
+  // answers once the drivers have stopped.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+
+// ============================================================================
+// Starting
+// ============================================================================
+
+message StartRequest {
+  HostConfig config = 1;
+  Registrations registrations = 2;
+}
+
+message StartResponse {
+  // The worker's identity: the configured one, or the one the host generated.
+  string identity = 1;
+}
+
+// HostConfig is one worker's configuration. A zero value means the host's
+// default, as for the Rust `HostConfig`.
+message HostConfig {
+  // How every connection the worker opens reaches the engine.
+  Connection connection = 1;
+
+  // The task queue the worker polls. Required.
+  string task_queue = 2;
+
+  // The worker's identity, the same for every driver and registration for the
+  // worker's whole life. Empty: the host generates one.
+  string identity = 3;
+
+  // The release the worker runs; runs are bound to it on first claim. Empty:
+  // none.
+  string version_id = 4;
+
+  // Workflow activations, tasks and actor operations run at once.
+  uint32 max_concurrent_workflows = 5;
+  uint32 max_concurrent_tasks = 6;
+  uint32 max_concurrent_actor_operations = 7;
+
+  // Polls each driver keeps open.
+  uint32 workflow_pollers = 8;
+  uint32 task_pollers = 9;
+  uint32 actor_pollers = 10;
+
+  // How often the worker tells the engine it is alive.
+  google.protobuf.Duration heartbeat_interval = 11;
+
+  // Sessions hosted at once.
+  uint32 max_sessions = 12;
+
+  // How long a stopping worker gives the language to finish the work it holds.
+  google.protobuf.Duration shutdown_grace = 13;
+
+  // The SDK running the worker and its version, reported to the engine, for
+  // example `orcher-sdk-go` and `0.1.0`.
+  string sdk_name = 14;
+  string sdk_version = 15;
+
+  // The worker protocol version the SDK supports. What a version promises
+  // covers the language SDK too, so the SDK raises it once it does what the
+  // version says.
+  uint32 protocol_version = 16;
+
+  // Every step-id scheme the SDK can replay. The engine hands the worker only
+  // runs bound to one of them.
+  repeated orcher.kernel.v1.StepIdScheme supported_step_ids = 17;
+}
+
+// Connection is how a worker reaches the engine.
+message Connection {
+  // The engine's address, for example `http://localhost:50051`. An `https`
+  // address is reached over TLS.
+  string url = 1;
+
+  // The namespace the worker serves. Empty: `default`.
+  string namespace = 2;
+
+  // Sent as `authorization: Bearer <key>` on every call. Empty: none.
+  string api_key = 3;
+
+  // Sent as `x-organization-id` on every call. Empty: none.
+  string organization_id = 4;
+
+  // TLS settings beyond the system trust store. Absent: none.
+  Tls tls = 5;
+
+  // How long a connect may take.
+  google.protobuf.Duration connect_timeout = 6;
+
+  // The largest message sent or received.
+  uint64 max_message_bytes = 7;
+}
+
+// Tls is a private CA, a client identity for mTLS, or a server name.
+message Tls {
+  // CA certificate PEM, for a private or self-signed authority. Empty: the
+  // system trust store.
+  bytes ca_cert = 1;
+
+  // Client certificate and private key PEM, for mTLS.
+  bytes client_cert = 2;
+  bytes client_key = 3;
+
+  // The name used for SNI and certificate verification instead of the URL's
+  // host.
+  string domain_name = 4;
+}
+
+// Registrations is what the worker runs.
+message Registrations {
+  repeated string workflow_types = 1;
+
+  // Not counting the built-in session tasks.
+  repeated string task_types = 2;
+
+  repeated string actor_types = 3;
+
+  // The operations the worker runs for its actor types; every actor type
+  // needs at least one. Their actor types count as registered.
+  repeated ActorHandler actor_handlers = 4;
+}
+
+// ActorHandler is one operation a worker runs for an actor type.
+message ActorHandler {
+  // The actor type, for example `Cart`.
+  string actor_name = 1;
+
+  // The operation, for example `add_item`.
+  string operation = 2;
+
+  // Whether the operation may run alongside others on the same actor.
+  ActorMode mode = 3;
+}
+
+// ============================================================================
+// Workflow activations
+// ============================================================================
+
+message NextActivationRequest {}
+
+message NextActivationResponse {
+  // Absent once the host is stopping.
+  orcher.kernel.v1.RunActivation activation = 1;
+}
+
+message CompleteActivationRequest {
+  orcher.kernel.v1.RunActivationResult result = 1;
+}
+
+message CompleteActivationResponse {}
+
+// ============================================================================
+// Tasks
+// ============================================================================
+
+message NextTaskRequest {}
+
+message NextTaskResponse {
+  // Absent once the host is stopping.
+  TaskAssignment task = 1;
+}
+
+message HeartbeatTaskRequest {
+  TaskHeartbeat heartbeat = 1;
+}
+
+message HeartbeatTaskResponse {
+  HeartbeatAnswer answer = 1;
+}
+
+message WaitTaskCancelledRequest {
+  // The attempt, as its assignment named it.
+  bytes token = 1;
+}
+
+message WaitTaskCancelledResponse {
+  bool cancelled = 1;
+}
+
+message CompleteTaskRequest {
+  TaskOutcome outcome = 1;
+}
+
+message CompleteTaskResponse {}
+
+// ============================================================================
+// Actor operations and state
+// ============================================================================
+
+message NextActorOperationRequest {}
+
+message NextActorOperationResponse {
+  // Absent once the host is stopping.
+  ActorOperation operation = 1;
+}
+
+message CompleteActorOperationRequest {
+  ActorResult result = 1;
+}
+
+message CompleteActorOperationResponse {}
+
+// StateScope is which actor's state, and on behalf of which operation.
+message StateScope {
+  // The actor type.
+  string actor_name = 1;
+
+  // The actor instance.
+  string key = 2;
+
+  // The operation the access is part of, as it was delivered.
+  string execution_id = 3;
+}
+
+message GetActorStateRequest {
+  StateScope scope = 1;
+  string state_key = 2;
+}
+
+message GetActorStateResponse {
+  // Absent when the key holds nothing.
+  StateValue value = 1;
+}
+
+// StateValue is a stored value with the version it was written at.
+message StateValue {
+  bytes value = 1;
+
+  // For a conditional write.
+  string version = 2;
+}
+
+message SetActorStateRequest {
+  StateScope scope = 1;
+  string state_key = 2;
+  bytes value = 3;
+
+  // Refuse the write unless the stored version is this one. Absent: write
+  // unconditionally.
+  optional string expected_version = 4;
+}
+
+message SetActorStateResponse {
+  // The version the value was written at.
+  string version = 1;
+}
+
+message DeleteActorStateRequest {
+  StateScope scope = 1;
+  string state_key = 2;
+}
+
+message DeleteActorStateResponse {
+  // Whether the key held a value.
+  bool deleted = 1;
+}
+
+message ListActorStateKeysRequest {
+  StateScope scope = 1;
+  string prefix = 2;
+}
+
+message ListActorStateKeysResponse {
+  repeated string keys = 1;
+}
+
+// ============================================================================
+// Stopping
+// ============================================================================
+
+message ShutdownRequest {}
+
+message ShutdownResponse {}
