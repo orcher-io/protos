@@ -141,6 +141,13 @@ message PollWorkflowExecutionRequest {
   // supports it, otherwise to the worker's legacy scheme. Empty, a worker
   // from before schemes: it gets only runs not bound yet, and binds nothing.
   repeated StepIdScheme supported_step_ids = 10;
+
+  // This worker process keeps each run's journal between activations, and
+  // so accepts an activation carrying only the entries after those it was
+  // sent before (see history_after_entry_id on the response). False, the
+  // default and every worker from before it: every activation carries the
+  // run's whole journal.
+  bool history_cached = 11;
 }
 
 // PollWorkflowExecutionResponse contains workflow execution work.
@@ -201,6 +208,17 @@ message PollWorkflowExecutionResponse {
   // (restart-fresh, workflow retry) gets its own. Default child workflow ids
   // and the run's random seed derive from it, never from the run id.
   string history_lineage = 17;
+
+  // Which part of the run's journal `journal` carries. 0: the whole journal,
+  // as every activation did before this field. N > 0: only the entries after
+  // entry N, sent only to a poll with history_cached from the worker process
+  // (worker_instance_id) that was sent entries 1 to N of this run before; the
+  // worker joins them to the entries it holds. A worker that does not hold
+  // exactly entries 1 to N of this run (it restarted, or evicted the run)
+  // releases the activation with history_missing and is sent the whole
+  // journal next time. The entries of one run never change once written, so
+  // any entries 1 to N it holds are the ones meant.
+  int64 history_after_entry_id = 18;
 }
 
 // CompleteWorkflowExecutionRequest completes a workflow execution step.
@@ -594,6 +612,12 @@ message ReleaseWorkflowExecutionRequest {
   // tell by identity, and releases the step only if this service is the one
   // holding it.
   bytes task_token = 5;
+
+  // The step carried only the entries after history_after_entry_id, and this
+  // service does not hold the run's earlier entries. The step is released as
+  // any other, and the next activation of the run, to whichever poll, carries
+  // the whole journal.
+  bool history_missing = 6;
 }
 
 // ReleaseWorkflowExecutionResponse acknowledges the release.
