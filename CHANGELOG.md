@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/orcher-io/protos/compare/v0.14.0...v0.15.0) (2026-10-31)
+
+
+### Features
+
+* activations that carry only a run's new journal entries ([#46](https://github.com/orcher-io/protos/issues/46)) ([468186a](https://github.com/orcher-io/protos/commit/468186a033bf70d21b0702b439f7d481497e5389))
+
 ## [0.14.0](https://github.com/orcher-io/protos/compare/v0.13.0...v0.14.0) (2026-10-24)
 
 
