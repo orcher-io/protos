@@ -108,32 +108,12 @@ message Payload {
   map<string, bytes> metadata = 2;
 }
 
-// Payloads is an ordered list of payloads, typically the arguments of a
-// workflow or task.
+// Payloads is an ordered list of payloads.
 //
-// Each argument is serialized as its own Payload.
-//
-// # Example Usage
-//
-// ## Function with Multiple Arguments
-// ```text
-// async fn process_order(order_id: String, amount: f64, customer: Customer) -> Result<Receipt>
-// ```
-//
-// is called with:
-// ```text
-// Payloads {
-//   payloads: [
-//     Payload { /* order_id serialized */ },
-//     Payload { /* amount serialized */ },
-//     Payload { /* customer serialized */ }
-//   ]
-// }
-// ```
+// It is not how a call's argument travels: a call carries one value, as at
+// most one Payload, and the SDK binds the function's parameters from it.
 message Payloads {
-  // The arguments or return values, in parameter order: payloads[0] is the
-  // first argument, payloads[1] the second, and so on. Empty for a function
-  // that takes no arguments.
+  // The payloads, in order.
   repeated Payload payloads = 1;
 }
 

@@ -262,7 +262,9 @@ message Resolution {
 
 // RunStarted starts the run: always the first resolution.
 message RunStarted {
-  // The workflow's arguments, in parameter order.
+  // The workflow's argument: at most one payload, the whole value. A call
+  // carries one value; the SDK binds the function's parameters from it.
+  // Empty: no argument.
   repeated Payload input = 1;
 
   // Which attempt of the run this is, from 1.
@@ -347,7 +349,9 @@ message UpdateArrived {
   // The update handler's name.
   string name = 2;
 
-  // The update's arguments, in parameter order.
+  // The update's argument: at most one payload, the whole value. A call
+  // carries one value; the SDK binds the handler's parameters from it.
+  // Empty: no argument.
   repeated Payload args = 3;
 }
 
@@ -399,7 +403,9 @@ message QueryAsked {
   // The query handler's name.
   string name = 2;
 
-  // The query's arguments, in parameter order.
+  // The query's argument: at most one payload, the whole value. A call
+  // carries one value; the SDK binds the handler's parameters from it.
+  // Empty: no argument.
   repeated Payload args = 3;
 }
 
@@ -497,7 +503,9 @@ message RunTask {
   // The queue to run it on. Empty: the run's own queue.
   string task_queue = 2;
 
-  // The task's arguments, in parameter order.
+  // The task's argument: at most one payload, the whole value. A call
+  // carries one value; the SDK binds the function's parameters from it.
+  // Empty: no argument.
   repeated Payload input = 3;
 
   // How long it may wait to be started.
@@ -549,7 +557,9 @@ message StartChild {
   // The namespace to run it in. Empty: the parent's namespace.
   string namespace = 4;
 
-  // The child's arguments, in parameter order.
+  // The child's argument: at most one payload, the whole value. A call
+  // carries one value; the SDK binds the workflow's parameters from it.
+  // Empty: no argument.
   repeated Payload input = 5;
 
   // How long the child may run in total.
@@ -649,7 +659,9 @@ message RestartFresh {
   // The queue to start it on. Empty: this run's queue.
   string task_queue = 2;
 
-  // The new run's arguments, in parameter order.
+  // The new run's argument: at most one payload, the whole value. A call
+  // carries one value; the SDK binds the workflow's parameters from it.
+  // Empty: no argument.
   repeated Payload input = 3;
 
   // The new run's execution timeout. Unset: the engine's default, as for a

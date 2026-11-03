@@ -34,7 +34,9 @@ message TaskAssignment {
   // The workflow run that scheduled it.
   orcher.kernel.v1.RunRef run = 4;
 
-  // The task's arguments, in parameter order.
+  // The task's argument: at most one payload, the whole value. A call
+  // carries one value; the SDK binds the function's parameters from it.
+  // Empty: no argument.
   repeated orcher.kernel.v1.Payload input = 5;
 
   // Which attempt this is, from 1.
