@@ -172,7 +172,10 @@ message PollWorkflowExecutionResponse {
   // entries to reconstruct workflow state.
   repeated JournalEntry journal = 7;
 
-  // Previous execution started event ID (for pagination).
+  // The journal entry the run's last applied activation read to: the run
+  // observed every outcome at or before it in an earlier activation, which a
+  // worker may report to the code it re-runs. 0: not known, as on a run's
+  // first activation or from an engine that does not report it.
   int64 previous_started_event_id = 8;
 
   // Started event ID for this execution step.
