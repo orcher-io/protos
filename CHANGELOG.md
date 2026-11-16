@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/orcher-io/protos/compare/v0.15.0...v0.16.0) (2026-11-16)
+
+
+### Features
+
+* name a polled run by the workflow id clients know it by ([#51](https://github.com/orcher-io/protos/issues/51)) ([ed8e586](https://github.com/orcher-io/protos/commit/ed8e5862f312ba42f63297a175cfa48926e43eec))
+
 ## [0.15.0](https://github.com/orcher-io/protos/compare/v0.14.0...v0.15.0) (2026-10-31)
 
 
