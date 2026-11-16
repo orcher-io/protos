@@ -222,6 +222,14 @@ message PollWorkflowExecutionResponse {
   // journal next time. The entries of one run never change once written, so
   // any entries 1 to N it holds are the ones meant.
   int64 history_after_entry_id = 18;
+
+  // The workflow id clients know the run by: the one it was started with
+  // (for example "order-1001"), or, for a run started without one, the id the
+  // server gave it, as StartWorkflowResponse.workflow_id reported. Name the
+  // run by it to the people who run it, in logs and errors. `workflow_id` is
+  // the engine's own id for the run, to send back in completions. Empty from
+  // an engine that does not report it.
+  string client_workflow_id = 19;
 }
 
 // CompleteWorkflowExecutionRequest completes a workflow execution step.
@@ -443,6 +451,11 @@ message PollTaskExecutionResponse {
 
   // Retry policy for this task.
   RetryPolicy retry_policy = 15;
+
+  // The workflow id clients know the task's run by, as
+  // PollWorkflowExecutionResponse.client_workflow_id. Empty from an engine
+  // that does not report it.
+  string client_workflow_id = 16;
 }
 
 // CompleteTaskExecutionRequest reports successful task completion.
